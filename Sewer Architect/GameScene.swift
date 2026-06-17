@@ -75,6 +75,8 @@ final class GameScene: SKScene {
         backgroundColor = SKColor(white: 0.10, alpha: 1)
 
         removeAllChildren()
+        boardNode.zPosition = LayerRange.board
+        uiNode.zPosition = LayerRange.ui
         addChild(boardNode)
         addChild(uiNode)
         uiNode.position = CGPoint(x: 0, y: GameScene.boardHeight)
@@ -155,6 +157,7 @@ final class GameScene: SKScene {
                                         size: CGSize(width: GameScene.tileSize - 1,
                                                      height: GameScene.tileSize - 1))
                 node.position = pointForCoord(coord)
+                node.zPosition = zPosition(for: coord, layerOffset: BoardLayer.terrainTop)
                 boardNode.addChild(node)
                 column.append(node)
             }
@@ -280,7 +283,30 @@ final class GameScene: SKScene {
         controlButtons.first(where: { $0.name == name })?.label
     }
 
-    // MARK: Coordinates
+    // MARK: Coordinates / depth sorting
+
+    private enum LayerRange {
+        static let board: CGFloat = 0
+        static let ui: CGFloat = 10_000
+        static let modal: CGFloat = 20_000
+    }
+
+    private enum BoardLayer {
+        static let terrainSide: CGFloat = 0
+        static let terrainTop: CGFloat = 1
+        static let pipe: CGFloat = 2
+        static let building: CGFloat = 3
+        static let utility: CGFloat = 4
+        static let marker: CGFloat = 6
+        static let label: CGFloat = 7
+        static let animation: CGFloat = 8
+    }
+
+    private func zPosition(for coord: GridCoord, layerOffset: CGFloat = 0) -> CGFloat {
+        let diagonal = CGFloat(coord.x + coord.y)
+        let elevation = CGFloat(world.groundLevel(at: coord))
+        return diagonal * 100 + elevation * 10 + layerOffset
+    }
 
     private func pointForCoord(_ c: GridCoord) -> CGPoint {
         CGPoint(x: (CGFloat(c.x) + 0.5) * GameScene.tileSize,
@@ -538,7 +564,7 @@ final class GameScene: SKScene {
             : SKColor(red: 0.45, green: 0.30, blue: 0.14, alpha: 1)  // brown
         let container = SKNode()
         container.position = pointForCoord(coord)
-        container.zPosition = 500
+        container.zPosition = zPosition(for: coord, layerOffset: BoardLayer.animation)
         boardNode.addChild(container)
 
         let ring = SKShapeNode(circleOfRadius: GameScene.tileSize * 0.22)
@@ -620,6 +646,7 @@ final class GameScene: SKScene {
                                 size: CGSize(width: GameScene.tileSize - 7,
                                              height: GameScene.tileSize - 7))
         node.position = pointForCoord(coord)
+        node.zPosition = zPosition(for: coord, layerOffset: BoardLayer.pipe)
         boardNode.addChild(node)
         dynamicNodes.append(node)
 
@@ -627,6 +654,7 @@ final class GameScene: SKScene {
             let x = SKLabelNode(text: "✕")
             x.fontName = "Helvetica-Bold"; x.fontSize = 14; x.fontColor = .red
             x.verticalAlignmentMode = .center; x.horizontalAlignmentMode = .center
+            x.zPosition = BoardLayer.marker
             node.addChild(x)
         }
     }
@@ -659,12 +687,14 @@ final class GameScene: SKScene {
         node.strokeColor = house.isBackedUp ? .red : (house.isConnected ? .white : .systemYellow)
         node.lineWidth = house.isBackedUp ? 3 : 1
         node.position = pointForCoord(coord)
+        node.zPosition = zPosition(for: coord, layerOffset: BoardLayer.building)
         boardNode.addChild(node)
         dynamicNodes.append(node)
 
         let letter = SKLabelNode(text: String(house.zone.shortName.prefix(1)))
         letter.fontName = "Helvetica-Bold"; letter.fontSize = 12; letter.fontColor = .black
         letter.verticalAlignmentMode = .center; letter.horizontalAlignmentMode = .center
+        letter.zPosition = BoardLayer.label
         node.addChild(letter)
     }
 
@@ -688,12 +718,14 @@ final class GameScene: SKScene {
         node.strokeColor = plant.condition < 30 ? .red : .white
         node.lineWidth = 2
         node.position = pointForCoord(coord)
+        node.zPosition = zPosition(for: coord, layerOffset: BoardLayer.utility)
         boardNode.addChild(node)
         dynamicNodes.append(node)
 
         let label = SKLabelNode(text: "P\(plant.tier == .primary ? "1" : plant.tier == .secondary ? "2" : "3")")
         label.fontName = "Helvetica-Bold"; label.fontSize = 11; label.fontColor = .white
         label.verticalAlignmentMode = .center; label.horizontalAlignmentMode = .center
+        label.zPosition = BoardLayer.label
         node.addChild(label)
     }
 
@@ -707,6 +739,7 @@ final class GameScene: SKScene {
         node.lineWidth = 2
         node.zRotation = .pi / 4
         node.position = pointForCoord(coord)
+        node.zPosition = zPosition(for: coord, layerOffset: BoardLayer.utility)
         boardNode.addChild(node)
         dynamicNodes.append(node)
 
@@ -714,6 +747,7 @@ final class GameScene: SKScene {
         arrow.fontName = "Helvetica-Bold"; arrow.fontSize = 13; arrow.fontColor = .black
         arrow.verticalAlignmentMode = .center; arrow.horizontalAlignmentMode = .center
         arrow.zRotation = -.pi / 4
+        arrow.zPosition = BoardLayer.label
         node.addChild(arrow)
     }
 
@@ -725,11 +759,13 @@ final class GameScene: SKScene {
         node.strokeColor = .white
         node.lineWidth = 1
         node.position = pointForCoord(coord)
+        node.zPosition = zPosition(for: coord, layerOffset: BoardLayer.utility)
         boardNode.addChild(node)
         dynamicNodes.append(node)
         let g = SKLabelNode(text: "≈")
         g.fontName = "Helvetica-Bold"; g.fontSize = 12; g.fontColor = .black
         g.verticalAlignmentMode = .center; g.horizontalAlignmentMode = .center
+        g.zPosition = BoardLayer.label
         node.addChild(g)
     }
 
@@ -743,6 +779,7 @@ final class GameScene: SKScene {
         node.strokeColor = .white
         node.lineWidth = 1
         node.position = pointForCoord(coord)
+        node.zPosition = zPosition(for: coord, layerOffset: BoardLayer.utility)
         boardNode.addChild(node)
         dynamicNodes.append(node)
     }
@@ -844,7 +881,7 @@ final class GameScene: SKScene {
     private func presentModal(_ lines: [String], action: (() -> Void)? = nil) {
         dismissModal()
         let overlay = SKNode()
-        overlay.zPosition = 1000
+        overlay.zPosition = LayerRange.modal
         addChild(overlay)
 
         let panel = SKSpriteNode(color: SKColor(white: 0.05, alpha: 0.95),
