@@ -61,11 +61,13 @@ struct ReportCard {
 enum GameMode: String, CaseIterable {
     case sandbox
     case scenario
+    case career
 
     var displayName: String {
         switch self {
         case .sandbox:  return "Sandbox"
         case .scenario: return "Scenario"
+        case .career:   return "Career"
         }
     }
 }
