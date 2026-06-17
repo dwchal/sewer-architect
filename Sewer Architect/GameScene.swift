@@ -287,6 +287,27 @@ final class GameScene: SKScene {
                 y: (CGFloat(c.y) + 0.5) * GameScene.tileSize)
     }
 
+    /// Isometric anchor for anything that rises off a tile.  Click handling keeps
+    /// using the orthogonal grid above, but miniatures share this projection so
+    /// they read as small city objects sitting on diamond tile centers.
+    private func isometricTileCenter(for coord: GridCoord) -> CGPoint {
+        let tile = GameScene.tileSize
+        let halfWidth = tile * 0.5
+        let halfHeight = tile * 0.25
+        let originX = GameScene.sceneSize.width * 0.5
+        let originY = tile * 2.4
+        let x = originX + CGFloat(coord.x - coord.y) * halfWidth
+        let y = originY + CGFloat(coord.x + coord.y) * halfHeight
+            + CGFloat(world.groundLevel(at: coord)) * 2
+        return CGPoint(x: x, y: y)
+    }
+
+    private func zPosition(for coord: GridCoord, verticalOffset: CGFloat = 0) -> CGFloat {
+        CGFloat(coord.x + coord.y) * 10
+            + CGFloat(world.groundLevel(at: coord)) * 2
+            + verticalOffset
+    }
+
     private func coordForBoardPoint(_ p: CGPoint) -> GridCoord? {
         guard p.x >= 0, p.y >= 0 else { return nil }
         let coord = GridCoord(x: Int(p.x / GameScene.tileSize),
@@ -651,21 +672,51 @@ final class GameScene: SKScene {
 
     private func addHouseNode(_ coord: GridCoord, id: Int) {
         guard let house = world.houses[id] else { return }
-        let node = SKShapeNode(rectOf: CGSize(width: GameScene.tileSize - 4,
-                                              height: GameScene.tileSize - 4),
-                               cornerRadius: 4)
+        let node = SKNode()
         let brightness = 0.55 + 0.15 * CGFloat(house.level)
-        node.fillColor = zoneColor(house.zone, brightness: brightness)
-        node.strokeColor = house.isBackedUp ? .red : (house.isConnected ? .white : .systemYellow)
-        node.lineWidth = house.isBackedUp ? 3 : 1
-        node.position = pointForCoord(coord)
+        let wallColor = zoneColor(house.zone, brightness: brightness)
+        let strokeColor: SKColor = house.isBackedUp ? .red : (house.isConnected ? .white : .systemYellow)
+
+        switch house.zone {
+        case .residential:
+            addPolygon(to: node, points: [CGPoint(x: -10, y: -7), CGPoint(x: 10, y: -7),
+                                          CGPoint(x: 10, y: 5), CGPoint(x: -10, y: 5)],
+                       fill: blend(wallColor, .white, t: 0.12), stroke: strokeColor)
+            addPolygon(to: node, points: [CGPoint(x: -12, y: 5), CGPoint(x: 0, y: 15),
+                                          CGPoint(x: 12, y: 5)],
+                       fill: blend(wallColor, .brown, t: 0.5), stroke: strokeColor)
+            addPolygon(to: node, points: [CGPoint(x: 2, y: -7), CGPoint(x: 10, y: -7),
+                                          CGPoint(x: 10, y: 5), CGPoint(x: 2, y: 5)],
+                       fill: blend(wallColor, .black, t: 0.2), stroke: .clear)
+        case .commercial:
+            addPolygon(to: node, points: [CGPoint(x: -12, y: -8), CGPoint(x: 12, y: -8),
+                                          CGPoint(x: 12, y: 10), CGPoint(x: -12, y: 10)],
+                       fill: wallColor, stroke: strokeColor)
+            addPolygon(to: node, points: [CGPoint(x: -13, y: 1), CGPoint(x: 13, y: 1),
+                                          CGPoint(x: 10, y: 6), CGPoint(x: -10, y: 6)],
+                       fill: .systemRed, stroke: .white)
+            addPolygon(to: node, points: [CGPoint(x: -7, y: -8), CGPoint(x: 7, y: -8),
+                                          CGPoint(x: 7, y: -1), CGPoint(x: -7, y: -1)],
+                       fill: blend(.systemTeal, .white, t: 0.25), stroke: .clear)
+        case .industrial:
+            addPolygon(to: node, points: [CGPoint(x: -13, y: -8), CGPoint(x: 11, y: -8),
+                                          CGPoint(x: 11, y: 6), CGPoint(x: -13, y: 6)],
+                       fill: wallColor, stroke: strokeColor)
+            addPolygon(to: node, points: [CGPoint(x: -14, y: 6), CGPoint(x: -5, y: 14),
+                                          CGPoint(x: 4, y: 6), CGPoint(x: 12, y: 12),
+                                          CGPoint(x: 13, y: 6)],
+                       fill: blend(.darkGray, wallColor, t: 0.25), stroke: strokeColor)
+            addPolygon(to: node, points: [CGPoint(x: 7, y: 6), CGPoint(x: 11, y: 6),
+                                          CGPoint(x: 11, y: 17), CGPoint(x: 7, y: 17)],
+                       fill: .darkGray, stroke: .black)
+        }
+        if house.isBackedUp {
+            addStatusBadge("!", color: .red, to: node)
+        }
+        node.position = isometricTileCenter(for: coord)
+        node.zPosition = zPosition(for: coord, verticalOffset: 4)
         boardNode.addChild(node)
         dynamicNodes.append(node)
-
-        let letter = SKLabelNode(text: String(house.zone.shortName.prefix(1)))
-        letter.fontName = "Helvetica-Bold"; letter.fontSize = 12; letter.fontColor = .black
-        letter.verticalAlignmentMode = .center; letter.horizontalAlignmentMode = .center
-        node.addChild(letter)
     }
 
     private func zoneColor(_ zone: ZoneType, brightness: CGFloat) -> SKColor {
@@ -679,72 +730,148 @@ final class GameScene: SKScene {
 
     private func addPlantNode(_ coord: GridCoord, id: Int) {
         guard let plant = world.plants[id] else { return }
-        let node = SKShapeNode(rectOf: CGSize(width: GameScene.tileSize - 2,
-                                              height: GameScene.tileSize - 2),
-                               cornerRadius: 6)
+        let node = SKNode()
         let tierBrightness: CGFloat = plant.tier == .primary ? 0.5
             : (plant.tier == .secondary ? 0.75 : 1.0)
-        node.fillColor = SKColor(red: 0.15, green: 0.7 * tierBrightness, blue: 0.25, alpha: 1)
-        node.strokeColor = plant.condition < 30 ? .red : .white
-        node.lineWidth = 2
-        node.position = pointForCoord(coord)
+        let outline: SKColor = plant.condition < 30 ? .red : .white
+        let water = SKColor(red: 0.18, green: 0.55 * tierBrightness, blue: 0.75, alpha: 1)
+        addPolygon(to: node, points: [CGPoint(x: -13, y: -9), CGPoint(x: 1, y: -13),
+                                      CGPoint(x: 14, y: -6), CGPoint(x: 0, y: -2)],
+                   fill: blend(water, .black, t: 0.1), stroke: outline)
+        addPolygon(to: node, points: [CGPoint(x: -12, y: -3), CGPoint(x: 2, y: -7),
+                                      CGPoint(x: 13, y: -1), CGPoint(x: -1, y: 4)],
+                   fill: water, stroke: outline)
+        if plant.tier != .primary {
+            addPolygon(to: node, points: [CGPoint(x: 2, y: 1), CGPoint(x: 13, y: 4),
+                                          CGPoint(x: 8, y: 11), CGPoint(x: -4, y: 8)],
+                       fill: blend(water, .white, t: 0.18), stroke: outline)
+        }
+        if plant.tier == .tertiary {
+            addPolygon(to: node, points: [CGPoint(x: -14, y: 5), CGPoint(x: -8, y: 3),
+                                          CGPoint(x: -3, y: 7), CGPoint(x: -10, y: 11)],
+                       fill: .systemMint, stroke: outline)
+        }
+        addPolygon(to: node, points: [CGPoint(x: -11, y: 6), CGPoint(x: -1, y: 6),
+                                      CGPoint(x: -1, y: 14), CGPoint(x: -11, y: 14)],
+                   fill: SKColor(red: 0.15, green: 0.7 * tierBrightness, blue: 0.25, alpha: 1),
+                   stroke: outline)
+        node.position = isometricTileCenter(for: coord)
+        node.zPosition = zPosition(for: coord, verticalOffset: 5)
         boardNode.addChild(node)
         dynamicNodes.append(node)
-
-        let label = SKLabelNode(text: "P\(plant.tier == .primary ? "1" : plant.tier == .secondary ? "2" : "3")")
-        label.fontName = "Helvetica-Bold"; label.fontSize = 11; label.fontColor = .white
-        label.verticalAlignmentMode = .center; label.horizontalAlignmentMode = .center
-        node.addChild(label)
     }
 
     private func addPumpNode(_ coord: GridCoord, id: Int) {
         guard let pump = world.pumps[id] else { return }
-        let node = SKShapeNode(rectOf: CGSize(width: GameScene.tileSize - 6,
-                                              height: GameScene.tileSize - 6),
-                               cornerRadius: 3)
-        node.fillColor = pump.online ? .systemOrange : SKColor(red: 0.4, green: 0.1, blue: 0.1, alpha: 1)
-        node.strokeColor = pump.hasBackupPump ? .systemGreen : .white
-        node.lineWidth = 2
-        node.zRotation = .pi / 4
-        node.position = pointForCoord(coord)
+        let node = SKNode()
+        let fill = pump.online ? SKColor.systemOrange : SKColor(red: 0.4, green: 0.1, blue: 0.1, alpha: 1)
+        addPolygon(to: node, points: [CGPoint(x: -10, y: -8), CGPoint(x: 8, y: -8),
+                                      CGPoint(x: 10, y: 6), CGPoint(x: -8, y: 9)],
+                   fill: fill, stroke: pump.hasBackupPump ? .systemGreen : .white)
+        addPolygon(to: node, points: [CGPoint(x: -14, y: -2), CGPoint(x: -8, y: -4),
+                                      CGPoint(x: 12, y: 4), CGPoint(x: 14, y: 8),
+                                      CGPoint(x: 8, y: 9), CGPoint(x: -12, y: 1)],
+                   fill: .darkGray, stroke: .white)
+        addArrow(to: node, online: pump.online)
+        node.position = isometricTileCenter(for: coord)
+        node.zPosition = zPosition(for: coord, verticalOffset: 4)
         boardNode.addChild(node)
         dynamicNodes.append(node)
-
-        let arrow = SKLabelNode(text: pump.online ? "↑" : "×")
-        arrow.fontName = "Helvetica-Bold"; arrow.fontSize = 13; arrow.fontColor = .black
-        arrow.verticalAlignmentMode = .center; arrow.horizontalAlignmentMode = .center
-        arrow.zRotation = -.pi / 4
-        node.addChild(arrow)
     }
 
     private func addDrainNode(_ coord: GridCoord) {
-        let node = SKShapeNode(rectOf: CGSize(width: GameScene.tileSize - 8,
-                                              height: GameScene.tileSize - 8),
-                               cornerRadius: 2)
-        node.fillColor = .systemTeal
-        node.strokeColor = .white
-        node.lineWidth = 1
-        node.position = pointForCoord(coord)
+        let node = SKNode()
+        addPolygon(to: node, points: [CGPoint(x: -12, y: -4), CGPoint(x: 0, y: -10),
+                                      CGPoint(x: 12, y: -4), CGPoint(x: 0, y: 3)],
+                   fill: .systemTeal, stroke: .white)
+        for x in stride(from: -7, through: 7, by: 7) {
+            addPolygon(to: node, points: [CGPoint(x: CGFloat(x) - 1, y: -6),
+                                          CGPoint(x: CGFloat(x) + 1, y: -6),
+                                          CGPoint(x: CGFloat(x) + 1, y: 0),
+                                          CGPoint(x: CGFloat(x) - 1, y: 0)],
+                       fill: .black, stroke: .clear)
+        }
+        node.position = isometricTileCenter(for: coord)
+        node.zPosition = zPosition(for: coord, verticalOffset: 3)
         boardNode.addChild(node)
         dynamicNodes.append(node)
-        let g = SKLabelNode(text: "≈")
-        g.fontName = "Helvetica-Bold"; g.fontSize = 12; g.fontColor = .black
-        g.verticalAlignmentMode = .center; g.horizontalAlignmentMode = .center
-        node.addChild(g)
     }
 
     private func addBasinNode(_ coord: GridCoord, id: Int) {
         guard let basin = world.basins[id] else { return }
-        let node = SKShapeNode(rectOf: CGSize(width: GameScene.tileSize - 4,
-                                              height: GameScene.tileSize - 4),
-                               cornerRadius: 8)
+        let node = SKNode()
         let fill = CGFloat(basin.stored) / CGFloat(RetentionBasin.capacity)
-        node.fillColor = SKColor(red: 0.2, green: 0.3 + 0.4 * fill, blue: 0.7, alpha: 1)
-        node.strokeColor = .white
-        node.lineWidth = 1
-        node.position = pointForCoord(coord)
+        addPolygon(to: node, points: [CGPoint(x: -14, y: -4), CGPoint(x: 0, y: -12),
+                                      CGPoint(x: 14, y: -4), CGPoint(x: 0, y: 6)],
+                   fill: SKColor(red: 0.16, green: 0.18, blue: 0.22, alpha: 1), stroke: .white)
+        addPolygon(to: node, points: [CGPoint(x: -10, y: -4), CGPoint(x: 0, y: -9),
+                                      CGPoint(x: 10, y: -4), CGPoint(x: 0, y: 3)],
+                   fill: SKColor(red: 0.2, green: 0.3 + 0.4 * fill, blue: 0.7, alpha: 1), stroke: .clear)
+        addPolygon(to: node, points: [CGPoint(x: -8, y: 3), CGPoint(x: -2, y: 0),
+                                      CGPoint(x: 8, y: 3), CGPoint(x: 2, y: 6)],
+                   fill: SKColor(red: 0.25, green: 0.65, blue: 0.85, alpha: 0.8), stroke: .clear)
+        node.position = isometricTileCenter(for: coord)
+        node.zPosition = zPosition(for: coord, verticalOffset: 2)
         boardNode.addChild(node)
         dynamicNodes.append(node)
+    }
+
+    @discardableResult
+    private func addPolygon(to parent: SKNode,
+                            points: [CGPoint],
+                            fill: SKColor,
+                            stroke: SKColor,
+                            lineWidth: CGFloat = 1) -> SKShapeNode {
+        let path = CGMutablePath()
+        if let first = points.first {
+            path.move(to: first)
+            for point in points.dropFirst() {
+                path.addLine(to: point)
+            }
+            path.closeSubpath()
+        }
+        let shape = SKShapeNode(path: path)
+        shape.fillColor = fill
+        shape.strokeColor = stroke
+        shape.lineWidth = lineWidth
+        parent.addChild(shape)
+        return shape
+    }
+
+    private func addStatusBadge(_ text: String, color: SKColor, to parent: SKNode) {
+        let badge = SKShapeNode(circleOfRadius: 5)
+        badge.fillColor = color
+        badge.strokeColor = .white
+        badge.position = CGPoint(x: 11, y: 12)
+        parent.addChild(badge)
+
+        let label = SKLabelNode(text: text)
+        label.fontName = "Helvetica-Bold"
+        label.fontSize = 8
+        label.fontColor = .white
+        label.verticalAlignmentMode = .center
+        label.horizontalAlignmentMode = .center
+        badge.addChild(label)
+    }
+
+    private func addArrow(to parent: SKNode, online: Bool) {
+        let color: SKColor = online ? .white : .black
+        addPolygon(to: parent,
+                   points: [CGPoint(x: -5, y: -1), CGPoint(x: 4, y: -1),
+                            CGPoint(x: 4, y: -4), CGPoint(x: 10, y: 2),
+                            CGPoint(x: 4, y: 8), CGPoint(x: 4, y: 5),
+                            CGPoint(x: -5, y: 5)],
+                   fill: color,
+                   stroke: .clear)
+        if !online {
+            let label = SKLabelNode(text: "×")
+            label.fontName = "Helvetica-Bold"
+            label.fontSize = 16
+            label.fontColor = .white
+            label.verticalAlignmentMode = .center
+            label.horizontalAlignmentMode = .center
+            parent.addChild(label)
+        }
     }
 
     private func blend(_ a: SKColor, _ b: SKColor, t: CGFloat) -> SKColor {
