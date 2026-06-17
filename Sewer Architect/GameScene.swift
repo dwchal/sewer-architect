@@ -35,7 +35,7 @@ final class GameScene: SKScene {
 
     private let boardNode = SKNode()
     private let uiNode = SKNode()
-    private var tileNodes: [[SKSpriteNode]] = []
+    private var tileNodes: [[SKShapeNode]] = []
     private var dynamicNodes: [SKNode] = []   // pipes + buildings, rebuilt per refresh
 
     // A click-to-dismiss modal (report card, win/loss, career transitions).
@@ -145,37 +145,156 @@ final class GameScene: SKScene {
 
     // MARK: Terrain
 
+    private let terrainElevationScale: CGFloat = 4
+    private let terrainSideDepth: CGFloat = 7
+
     private func buildTerrainTiles() {
-        var rows: [[SKSpriteNode]] = []
+        var rows: [[SKShapeNode]] = []
         for x in 0..<GameScene.gridWidth {
-            var column: [SKSpriteNode] = []
+            var column: [SKShapeNode] = []
             for y in 0..<GameScene.gridHeight {
                 let coord = GridCoord(x: x, y: y)
-                let node = SKSpriteNode(color: terrainColor(at: coord),
-                                        size: CGSize(width: GameScene.tileSize - 1,
-                                                     height: GameScene.tileSize - 1))
-                node.position = pointForCoord(coord)
-                boardNode.addChild(node)
-                column.append(node)
+                let center = isoPointForCoord(coord)
+
+                addTerrainSideFaces(for: coord)
+
+                let top = SKShapeNode(path: polygonPath(tileTopPolygon(center: center)))
+                top.fillColor = terrainColor(at: coord)
+                top.strokeColor = .clear
+                top.lineWidth = 0
+                top.zPosition = terrainZPosition(for: coord) + 2
+                boardNode.addChild(top)
+
+                addTerrainEdgeHighlights(for: coord, center: center, zPosition: top.zPosition + 0.1)
+                column.append(top)
             }
             rows.append(column)
         }
         tileNodes = rows
     }
 
+    private func isoPointForCoord(_ c: GridCoord) -> CGPoint {
+        let base = pointForCoord(c)
+        let elevation = CGFloat(world.groundLevel(at: c)) * terrainElevationScale
+        return CGPoint(x: base.x, y: base.y + elevation)
+    }
+
+    private func tileTopPolygon(center: CGPoint) -> [CGPoint] {
+        let halfWidth = GameScene.tileSize * 0.5
+        let halfHeight = GameScene.tileSize * 0.28
+        return [
+            CGPoint(x: center.x, y: center.y + halfHeight),
+            CGPoint(x: center.x + halfWidth, y: center.y),
+            CGPoint(x: center.x, y: center.y - halfHeight),
+            CGPoint(x: center.x - halfWidth, y: center.y)
+        ]
+    }
+
+    private func addTerrainSideFaces(for coord: GridCoord) {
+        let here = world.groundLevel(at: coord)
+        let center = isoPointForCoord(coord)
+        let corners = tileTopPolygon(center: center)
+        let edges: [(neighbor: GridCoord, start: CGPoint, end: CGPoint, shade: CGFloat)] = [
+            (GridCoord(x: coord.x + 1, y: coord.y), corners[1], corners[2], 0.62),
+            (GridCoord(x: coord.x, y: coord.y - 1), corners[2], corners[3], 0.50),
+            (GridCoord(x: coord.x - 1, y: coord.y), corners[3], corners[0], 0.56),
+            (GridCoord(x: coord.x, y: coord.y + 1), corners[0], corners[1], 0.68)
+        ]
+
+        for edge in edges {
+            let neighborLevel = world.inBounds(edge.neighbor) ? world.groundLevel(at: edge.neighbor) : 0
+            guard here > neighborLevel else { continue }
+            let drop = CGFloat(here - neighborLevel) * terrainElevationScale + terrainSideDepth
+            let sidePath = polygonPath([
+                edge.start,
+                edge.end,
+                CGPoint(x: edge.end.x, y: edge.end.y - drop),
+                CGPoint(x: edge.start.x, y: edge.start.y - drop)
+            ])
+            let side = SKShapeNode(path: sidePath)
+            side.fillColor = shade(terrainColor(at: coord), factor: edge.shade)
+            side.strokeColor = SKColor(white: 0, alpha: 0.18)
+            side.lineWidth = 0.5
+            side.zPosition = terrainZPosition(for: coord) + 1
+            boardNode.addChild(side)
+        }
+    }
+
+    private func addTerrainEdgeHighlights(for coord: GridCoord, center: CGPoint, zPosition: CGFloat) {
+        let here = world.groundLevel(at: coord)
+        let corners = tileTopPolygon(center: center)
+        let edges: [(neighbor: GridCoord, start: CGPoint, end: CGPoint)] = [
+            (GridCoord(x: coord.x, y: coord.y + 1), corners[0], corners[1]),
+            (GridCoord(x: coord.x + 1, y: coord.y), corners[1], corners[2]),
+            (GridCoord(x: coord.x, y: coord.y - 1), corners[2], corners[3]),
+            (GridCoord(x: coord.x - 1, y: coord.y), corners[3], corners[0])
+        ]
+
+        for edge in edges {
+            let neighborLevel = world.inBounds(edge.neighbor) ? world.groundLevel(at: edge.neighbor) : here
+            let delta = here - neighborLevel
+            let line = SKShapeNode(path: linePath(from: edge.start, to: edge.end))
+            line.strokeColor = delta >= 0 ? SKColor(white: 1, alpha: delta == 0 ? 0.10 : 0.24) : SKColor(white: 0, alpha: 0.20)
+            line.lineWidth = delta == 0 ? 0.5 : 1.2
+            line.zPosition = zPosition
+            boardNode.addChild(line)
+        }
+    }
+
+    private func polygonPath(_ points: [CGPoint]) -> CGPath {
+        let path = CGMutablePath()
+        guard let first = points.first else { return path }
+        path.move(to: first)
+        for point in points.dropFirst() { path.addLine(to: point) }
+        path.closeSubpath()
+        return path
+    }
+
+    private func linePath(from start: CGPoint, to end: CGPoint) -> CGPath {
+        let path = CGMutablePath()
+        path.move(to: start)
+        path.addLine(to: end)
+        return path
+    }
+
+    private func terrainZPosition(for coord: GridCoord) -> CGFloat {
+        -100 + CGFloat(coord.x + coord.y) * 0.1 + CGFloat(world.groundLevel(at: coord)) * 0.01
+    }
+
     /// Low ground (toward the outfall) reads blue-green; high ground reads
     /// brown. Helps the player see where gravity wants the flow to go.
     private func terrainColor(at c: GridCoord) -> SKColor {
+        let elevation = world.groundLevel(at: c)
         if c == world.outfall {
-            return SKColor(red: 0.10, green: 0.25, blue: 0.45, alpha: 1) // river
+            return SKColor(red: 0.08, green: 0.23, blue: 0.48, alpha: 1)
         }
-        let f = CGFloat(world.groundLevel(at: c)) / CGFloat(maxElevation)
-        let low = (r: CGFloat(0.12), g: CGFloat(0.26), b: CGFloat(0.30))
-        let high = (r: CGFloat(0.34), g: CGFloat(0.30), b: CGFloat(0.18))
-        return SKColor(red: low.r + (high.r - low.r) * f,
-                       green: low.g + (high.g - low.g) * f,
-                       blue: low.b + (high.b - low.b) * f,
-                       alpha: 1)
+
+        let f = CGFloat(elevation) / CGFloat(maxElevation)
+        let low = SKColor(red: 0.12, green: 0.26, blue: 0.30, alpha: 1)
+        let high = SKColor(red: 0.34, green: 0.30, blue: 0.18, alpha: 1)
+        var color = blend(low, high, t: f)
+
+        if isRiverbankTile(c) {
+            let riverDistance = abs(c.x - world.outfall.x) + abs(c.y - world.outfall.y)
+            let riverbank = SKColor(red: 0.08, green: 0.30, blue: 0.40, alpha: 1)
+            color = blend(color, riverbank, t: CGFloat(3 - riverDistance) / 4.0)
+        }
+        return color
+    }
+
+    private func isRiverbankTile(_ c: GridCoord) -> Bool {
+        let riverDistance = abs(c.x - world.outfall.x) + abs(c.y - world.outfall.y)
+        let lowEnoughForRiverbank = world.groundLevel(at: c) <= world.groundLevel(at: world.outfall) + 1
+        return riverDistance <= 2 && lowEnoughForRiverbank
+    }
+
+    private func shade(_ color: SKColor, factor: CGFloat) -> SKColor {
+        var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
+        color.usingColorSpace(.deviceRGB)?.getRed(&r, green: &g, blue: &b, alpha: &a)
+        return SKColor(red: max(0, min(1, r * factor)),
+                       green: max(0, min(1, g * factor)),
+                       blue: max(0, min(1, b * factor)),
+                       alpha: a)
     }
 
     // MARK: Panel / controls
@@ -583,8 +702,8 @@ final class GameScene: SKScene {
         for x in 0..<min(tileNodes.count, GameScene.gridWidth) {
             for y in 0..<min(tileNodes[x].count, GameScene.gridHeight) {
                 let c = GridCoord(x: x, y: y)
-                if c == world.outfall || (c.x + c.y) <= 2 {
-                    tileNodes[x][y].color = stained
+                if c == world.outfall || isRiverbankTile(c) {
+                    tileNodes[x][y].fillColor = stained
                 }
             }
         }
