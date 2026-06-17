@@ -19,6 +19,10 @@ struct Finance {
     /// Starting funds for a modest town.
     private(set) var cash: Int = 5_000
 
+    init(cash: Int = 5_000) {
+        self.cash = cash
+    }
+
     /// Monthly sewer fee charged per population unit served. Raising it brings
     /// money but angers citizens; lowering it is popular but starves the budget.
     var sewerRate: Double = 1.0

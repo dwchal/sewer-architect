@@ -41,6 +41,10 @@ final class World {
 
     var finance = Finance()
 
+    /// Tech tiers unlocked for this map (career levels restrict these).
+    var availableMaterials: [PipeMaterial] = PipeMaterial.allCases
+    var availablePlantTiers: [PlantTier] = PlantTier.allCases
+
     /// Player's current pipe material and plant tier selections for new builds.
     var selectedMaterial: PipeMaterial = .clay
     var selectedPlantTier: PlantTier = .primary
@@ -91,6 +95,38 @@ final class World {
         setHouse(GridCoord(x: 5, y: 2), .residential)
         setHouse(GridCoord(x: 5, y: 3), .residential)
         setHouse(GridCoord(x: 3, y: 4), .residential)
+    }
+
+    /// An old, sprawling town already wired with an undersized primary plant and
+    /// a single clay *combined* trunk sewer — the classic legacy system the
+    /// player has to retrofit before storm season drowns it in CSOs.
+    func seedLegacyCity() {
+        func setPipe(_ c: GridCoord) {
+            guard inBounds(c), tiles[c.x][c.y] == .empty else { return }
+            tiles[c.x][c.y] = .pipe
+            pipes[c] = PipeState(material: .clay, combined: true, condition: 55)
+        }
+        func setHouse(_ c: GridCoord, _ z: ZoneType, level: Int) {
+            guard inBounds(c), tiles[c.x][c.y] == .empty else { return }
+            let id = makeId()
+            tiles[c.x][c.y] = .house(id: id)
+            houses[id] = House(id: id, coord: c, zone: z, level: level)
+        }
+
+        // Plant at the low corner, one undersized clay trunk running east.
+        guard inBounds(GridCoord(x: 2, y: 3)) else { return }
+        let pid = makeId()
+        tiles[2][3] = .plant(id: pid)
+        plants[pid] = Plant(id: pid, coord: GridCoord(x: 2, y: 3), tier: .primary)
+
+        for x in 3...15 { setPipe(GridCoord(x: x, y: 3)) }
+
+        // Homes (and a little industry) hanging off the trunk, already dense.
+        for x in stride(from: 5, through: 15, by: 2) {
+            setHouse(GridCoord(x: x, y: 2), .residential, level: 2)
+            let zone: ZoneType = (x >= 13) ? .industrial : .residential
+            setHouse(GridCoord(x: x, y: 4), zone, level: 2)
+        }
     }
 
     init(width: Int, height: Int, seed: UInt64 = 0xC0FFEE) {

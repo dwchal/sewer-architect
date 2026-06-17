@@ -8,6 +8,7 @@
 //
 
 import SpriteKit
+import Foundation
 
 final class GameScene: SKScene {
 
@@ -26,8 +27,8 @@ final class GameScene: SKScene {
 
     // MARK: Model
 
-    private let world = World(width: gridWidth, height: gridHeight)
-    private lazy var simulation = Simulation(world: world)
+    private var world: World!
+    private var simulation: Simulation!
     private var maxElevation: Int = 1
 
     // MARK: Render nodes
@@ -36,7 +37,15 @@ final class GameScene: SKScene {
     private let uiNode = SKNode()
     private var tileNodes: [[SKSpriteNode]] = []
     private var dynamicNodes: [SKNode] = []   // pipes + buildings, rebuilt per refresh
-    private var reportOverlay: SKNode?
+
+    // A click-to-dismiss modal (report card, win/loss, career transitions).
+    private var modalOverlay: SKNode?
+    private var modalAction: (() -> Void)?
+
+    // MARK: Career
+
+    private var careerIndex = 0
+    private var outcomeShown = false
 
     // MARK: UI
 
@@ -65,17 +74,73 @@ final class GameScene: SKScene {
         anchorPoint = .zero
         backgroundColor = SKColor(white: 0.10, alpha: 1)
 
-        maxElevation = max(1, world.elevation.flatMap { $0 }.max() ?? 1)
-        world.seedStartingCity()
-
         removeAllChildren()
         addChild(boardNode)
         addChild(uiNode)
         uiNode.position = CGPoint(x: 0, y: GameScene.boardHeight)
 
-        buildTerrainTiles()
         buildPanel()
+        loadGame(mode: .sandbox, level: nil)
+    }
+
+    // MARK: Game setup / level loading
+
+    /// (Re)build the world + simulation for a sandbox game or a career level,
+    /// then rebuild the board and HUD around it.
+    private func loadGame(mode: GameMode, level: CareerLevel?) {
+        isRunning = false
+        controlLabel("ctl:play")?.text = "Play"
+        outcomeShown = false
+        dismissModal()
+
+        let seed = level?.seed ?? 0xC0FFEE
+        let w = World(width: GameScene.gridWidth, height: GameScene.gridHeight, seed: seed)
+        w.finance = Finance(cash: level?.startingCash ?? 5_000)
+        w.availableMaterials = level?.availableMaterials ?? PipeMaterial.allCases
+        w.availablePlantTiers = level?.availablePlantTiers ?? PlantTier.allCases
+        w.selectedMaterial = w.availableMaterials.first ?? .clay
+        w.selectedPlantTier = w.availablePlantTiers.first ?? .primary
+        if level?.legacy == true { w.seedLegacyCity() } else { w.seedStartingCity() }
+        world = w
+
+        let sim = Simulation(world: w, seed: seed)
+        sim.mode = mode
+        if let level { sim.scenario = level.scenario }
+        sim.weather.stormFrequency = level?.stormFrequency ?? 1.0
+        sim.growthRate = level?.growthRate ?? 1.0
+        simulation = sim
+
+        maxElevation = max(1, w.elevation.flatMap { $0 }.max() ?? 1)
+        currentTool = .pipe
+        rebuildBoard()
+        syncControlLabels()
         refreshRender()
+
+        if let level {
+            sim.log.post("Career — \(level.name): \(level.blurb)", severity: .info, tick: 0)
+        }
+    }
+
+    private func rebuildBoard() {
+        boardNode.removeAllChildren()
+        dynamicNodes.removeAll(keepingCapacity: true)
+        tileNodes.removeAll(keepingCapacity: true)
+        buildTerrainTiles()
+    }
+
+    /// Push current model state back onto the control button labels.
+    private func syncControlLabels() {
+        controlLabel("ctl:material")?.text = "Pipe:" + String(world.selectedMaterial.displayName.prefix(4))
+        controlLabel("ctl:tier")?.text = "Plant:" + String(world.selectedPlantTier.displayName.prefix(3))
+        controlLabel("ctl:combined")?.text = world.buildCombinedSewers ? "Combined" : "Separate"
+        controlLabel("ctl:prev")?.text = "Maint:" + (simulation.preventiveMaintenance ? "On" : "Off")
+        controlLabel("ctl:mode")?.text = modeLabel()
+        controlLabel("ctl:speed")?.text = ["1x", "2x", "4x"][speedIndex]
+        refreshToolHighlight()
+    }
+
+    private func modeLabel() -> String {
+        simulation.mode == .career ? "Lv\(careerIndex + 1)" : simulation.mode.displayName
     }
 
     // MARK: Terrain
@@ -233,7 +298,12 @@ final class GameScene: SKScene {
 
     override func mouseDown(with event: NSEvent) {
         let p = event.location(in: self)
-        if reportOverlay != nil { dismissReport(); return }
+        if modalOverlay != nil {
+            let action = modalAction
+            dismissModal()
+            action?()
+            return
+        }
         if p.y >= GameScene.boardHeight {
             handlePanelClick(at: p)
         } else {
@@ -309,8 +379,7 @@ final class GameScene: SKScene {
             simulation.preventiveMaintenance.toggle()
             controlLabel("ctl:prev")?.text = "Maint:" + (simulation.preventiveMaintenance ? "On" : "Off")
         case "ctl:mode":
-            simulation.mode = simulation.mode == .sandbox ? .scenario : .sandbox
-            controlLabel("ctl:mode")?.text = simulation.mode.displayName
+            cycleMode()
         case "ctl:report":
             toggleReport()
         default:
@@ -320,17 +389,44 @@ final class GameScene: SKScene {
     }
 
     private func cycleMaterial() {
-        let all = PipeMaterial.allCases
-        let i = all.firstIndex(of: world.selectedMaterial) ?? 0
-        world.selectedMaterial = all[(i + 1) % all.count]
+        let avail = world.availableMaterials
+        guard !avail.isEmpty else { return }
+        let i = avail.firstIndex(of: world.selectedMaterial) ?? -1
+        world.selectedMaterial = avail[(i + 1) % avail.count]
         controlLabel("ctl:material")?.text = "Pipe:" + String(world.selectedMaterial.displayName.prefix(4))
     }
 
     private func cyclePlantTier() {
-        let all = PlantTier.allCases
-        let i = all.firstIndex(of: world.selectedPlantTier) ?? 0
-        world.selectedPlantTier = all[(i + 1) % all.count]
+        let avail = world.availablePlantTiers
+        guard !avail.isEmpty else { return }
+        let i = avail.firstIndex(of: world.selectedPlantTier) ?? -1
+        world.selectedPlantTier = avail[(i + 1) % avail.count]
         controlLabel("ctl:tier")?.text = "Plant:" + String(world.selectedPlantTier.displayName.prefix(3))
+    }
+
+    /// Cycle Sandbox → Scenario → Career. Career (re)starts from level 1 on a
+    /// fresh map; the others keep the current map.
+    private func cycleMode() {
+        let order: [GameMode] = [.sandbox, .scenario, .career]
+        let i = order.firstIndex(of: simulation.mode) ?? 0
+        let next = order[(i + 1) % order.count]
+        switch next {
+        case .sandbox:
+            simulation.mode = .sandbox
+            simulation.resetOutcome()
+            outcomeShown = false
+            world.availableMaterials = PipeMaterial.allCases
+            world.availablePlantTiers = PlantTier.allCases
+            controlLabel("ctl:mode")?.text = modeLabel()
+        case .scenario:
+            simulation.mode = .scenario
+            simulation.beginScenario(Scenario())
+            outcomeShown = false
+            controlLabel("ctl:mode")?.text = modeLabel()
+        case .career:
+            careerIndex = 0
+            loadGame(mode: .career, level: Career.levels[0])
+        }
     }
 
     override func keyDown(with event: NSEvent) {
@@ -360,7 +456,138 @@ final class GameScene: SKScene {
             simulation.step()
             ticked = true
         }
-        if ticked { refreshRender() }
+        if ticked {
+            refreshRender()
+            spawnOverflowAnimations()
+            handleOutcomeTransition()
+        }
+    }
+
+    // MARK: Outcome / career transitions
+
+    private func handleOutcomeTransition() {
+        guard !outcomeShown else { return }
+        switch simulation.outcome {
+        case .ongoing:
+            return
+        case .won(let message):
+            outcomeShown = true
+            isRunning = false
+            controlLabel("ctl:play")?.text = "Play"
+            if simulation.mode == .career { presentCareerWin(message) }
+            else { presentModal(["🎉  YOU WIN", "", message, "", "(click to close)"]) }
+        case .lost(let message):
+            outcomeShown = true
+            isRunning = false
+            controlLabel("ctl:play")?.text = "Play"
+            if simulation.mode == .career { presentCareerLoss(message) }
+            else { presentModal(["☠️  GAME OVER", "", message, "", "(click to close)"]) }
+        }
+    }
+
+    private func presentCareerWin(_ message: String) {
+        let isLast = careerIndex + 1 >= Career.levels.count
+        if isLast {
+            presentModal([
+                "🏆  CAREER COMPLETE",
+                "", message, "",
+                "You've run sewers from Mudville to Old Town",
+                "without (entirely) drowning the place. Legendary.",
+                "", "(click to close)"
+            ])
+        } else {
+            let next = Career.levels[careerIndex + 1]
+            presentModal([
+                "✅  LEVEL COMPLETE — \(Career.levels[careerIndex].name)",
+                "", message, "",
+                "Next posting: \(next.name)",
+                next.blurb,
+                "", "(click to begin the next city)"
+            ], action: { [weak self] in
+                guard let self else { return }
+                self.careerIndex += 1
+                self.loadGame(mode: .career, level: Career.levels[self.careerIndex])
+            })
+        }
+    }
+
+    private func presentCareerLoss(_ message: String) {
+        presentModal([
+            "☠️  LEVEL FAILED — \(Career.levels[careerIndex].name)",
+            "", message, "",
+            "(click to retry this city)"
+        ], action: { [weak self] in
+            guard let self else { return }
+            self.loadGame(mode: .career, level: Career.levels[self.careerIndex])
+        })
+    }
+
+    // MARK: Overflow animations
+
+    private func spawnOverflowAnimations() {
+        for ev in simulation.overflowEventsThisTick {
+            spawnGeyser(at: ev.coord, isCSO: ev.isCSO, amount: ev.amount)
+        }
+    }
+
+    /// A manhole geyser: a murky splash ring plus a spray of droplets that arc
+    /// up and fall back down. CSOs spray sickly green; sewage backups spray brown.
+    private func spawnGeyser(at coord: GridCoord, isCSO: Bool, amount: Int) {
+        let color: SKColor = isCSO
+            ? SKColor(red: 0.32, green: 0.5, blue: 0.18, alpha: 1)   // murky green
+            : SKColor(red: 0.45, green: 0.30, blue: 0.14, alpha: 1)  // brown
+        let container = SKNode()
+        container.position = pointForCoord(coord)
+        container.zPosition = 500
+        boardNode.addChild(container)
+
+        let ring = SKShapeNode(circleOfRadius: GameScene.tileSize * 0.22)
+        ring.fillColor = color
+        ring.strokeColor = .clear
+        ring.alpha = 0.85
+        container.addChild(ring)
+        ring.run(.sequence([
+            .group([.scale(to: 2.4, duration: 0.5), .fadeOut(withDuration: 0.5)]),
+            .removeFromParent()
+        ]))
+
+        let count = min(7, 3 + amount / 3)
+        for i in 0..<count {
+            let drop = SKShapeNode(circleOfRadius: 2.5)
+            drop.fillColor = color
+            drop.strokeColor = .clear
+            container.addChild(drop)
+
+            let angle = Double(i) / Double(count) * 2 * Double.pi
+            let dx = CGFloat(cos(angle)) * GameScene.tileSize * 0.6
+            let up = GameScene.tileSize * (0.7 + 0.4 * CGFloat(i % 3))
+            let rise = SKAction.moveBy(x: dx, y: up, duration: 0.32)
+            rise.timingMode = .easeOut
+            let fall = SKAction.moveBy(x: dx * 0.5, y: -up * 1.4, duration: 0.42)
+            fall.timingMode = .easeIn
+            drop.run(.sequence([
+                rise,
+                .group([fall, .fadeOut(withDuration: 0.42)]),
+                .removeFromParent()
+            ]))
+        }
+        container.run(.sequence([.wait(forDuration: 1.1), .removeFromParent()]))
+    }
+
+    /// Stain the river corner toward sickly green as pollution rises.
+    private func updateRiver() {
+        let frac = min(1.0, CGFloat(simulation.score.riverPollution) / 120.0)
+        let clean = SKColor(red: 0.10, green: 0.25, blue: 0.45, alpha: 1)
+        let sick = SKColor(red: 0.28, green: 0.5, blue: 0.16, alpha: 1)
+        let stained = blend(clean, sick, t: frac)
+        for x in 0..<min(tileNodes.count, GameScene.gridWidth) {
+            for y in 0..<min(tileNodes[x].count, GameScene.gridHeight) {
+                let c = GridCoord(x: x, y: y)
+                if c == world.outfall || (c.x + c.y) <= 2 {
+                    tileNodes[x][y].color = stained
+                }
+            }
+        }
     }
 
     // MARK: Render
@@ -383,8 +610,8 @@ final class GameScene: SKScene {
                 }
             }
         }
+        updateRiver()
         updateStatus()
-        if reportOverlay != nil { rebuildReportOverlay() }
     }
 
     private func addPipeNode(_ coord: GridCoord) {
@@ -548,7 +775,12 @@ final class GameScene: SKScene {
 
         var outcomeStr = "Playing"
         switch simulation.outcome {
-        case .ongoing:     outcomeStr = simulation.mode == .scenario ? "Scenario: in progress" : "Sandbox"
+        case .ongoing:
+            switch simulation.mode {
+            case .sandbox:  outcomeStr = "Sandbox"
+            case .scenario: outcomeStr = "Scenario: in progress"
+            case .career:   outcomeStr = "Career: \(Career.levels[careerIndex].name)"
+            }
         case .won(let m):  outcomeStr = "WON — \(m)"
         case .lost(let m): outcomeStr = "LOST — \(m)"
         }
@@ -572,37 +804,16 @@ final class GameScene: SKScene {
         }
     }
 
-    // MARK: Report card overlay
+    // MARK: Modal overlay (report card, win/loss, career transitions)
 
     private func toggleReport() {
-        if reportOverlay != nil { dismissReport() } else { presentReport() }
+        if modalOverlay != nil { dismissModal(); return }
+        presentModal(reportCardLines())
     }
 
-    private func presentReport() {
-        let overlay = SKNode()
-        overlay.zPosition = 1000
-        addChild(overlay)
-        reportOverlay = overlay
-        rebuildReportOverlay()
-    }
-
-    private func dismissReport() {
-        reportOverlay?.removeFromParent()
-        reportOverlay = nil
-    }
-
-    private func rebuildReportOverlay() {
-        guard let overlay = reportOverlay else { return }
-        overlay.removeAllChildren()
-
-        let panel = SKSpriteNode(color: SKColor(white: 0.05, alpha: 0.95),
-                                 size: CGSize(width: size.width * 0.8, height: size.height * 0.7))
-        panel.position = CGPoint(x: size.width / 2, y: size.height / 2)
-        overlay.addChild(panel)
-
-        let lines: [String]
+    private func reportCardLines() -> [String] {
         if let c = simulation.lastReportCard {
-            lines = [
+            return [
                 "DEPARTMENT OF SANITATION — QUARTERLY REPORT",
                 c.headline,
                 "",
@@ -617,27 +828,49 @@ final class GameScene: SKScene {
                 "",
                 "(click anywhere or press R to close)"
             ]
-        } else {
-            lines = [
-                "DEPARTMENT OF SANITATION — QUARTERLY REPORT",
-                "",
-                "No report yet — press Play and run a full quarter",
-                "(\(Simulation.ticksPerQuarter) ticks) to receive your first review.",
-                "",
-                "(click anywhere or press R to close)"
-            ]
         }
+        return [
+            "DEPARTMENT OF SANITATION — QUARTERLY REPORT",
+            "",
+            "No report yet — press Play and run a full quarter",
+            "(\(Simulation.ticksPerQuarter) ticks) to receive your first review.",
+            "",
+            "(click anywhere or press R to close)"
+        ]
+    }
+
+    /// Show a centered modal panel of text. If `action` is non-nil it runs when
+    /// the player clicks to dismiss (used to advance/retry career levels).
+    private func presentModal(_ lines: [String], action: (() -> Void)? = nil) {
+        dismissModal()
+        let overlay = SKNode()
+        overlay.zPosition = 1000
+        addChild(overlay)
+
+        let panel = SKSpriteNode(color: SKColor(white: 0.05, alpha: 0.95),
+                                 size: CGSize(width: size.width * 0.84, height: size.height * 0.72))
+        panel.position = CGPoint(x: size.width / 2, y: size.height / 2)
+        overlay.addChild(panel)
 
         let startY = panel.position.y + panel.size.height / 2 - 34
         for (i, line) in lines.enumerated() {
             let label = SKLabelNode(text: line)
             label.fontName = i == 0 ? "Menlo-Bold" : "Menlo"
-            label.fontSize = i == 0 ? 14 : 12
+            label.fontSize = i == 0 ? 15 : 12
             label.fontColor = .white
             label.horizontalAlignmentMode = .center
             label.verticalAlignmentMode = .center
             label.position = CGPoint(x: panel.position.x, y: startY - CGFloat(i) * 22)
             overlay.addChild(label)
         }
+
+        modalOverlay = overlay
+        modalAction = action
+    }
+
+    private func dismissModal() {
+        modalOverlay?.removeFromParent()
+        modalOverlay = nil
+        modalAction = nil
     }
 }

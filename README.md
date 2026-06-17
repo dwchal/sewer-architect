@@ -46,7 +46,12 @@ Click a tool, then click (or click-drag, for pipe/erase/zoning) on the map.
 
 Play/Pause, speed (1x/2x/4x), Rate −/+ (the sewer fee), Loan (take a bond),
 Pipe material cycle, Plant tier cycle, Combined/Separate sewers, preventive
-Maintenance on/off, Sandbox/Scenario mode, and Report (quarterly report card).
+Maintenance on/off, mode (Sandbox → Scenario → Career), and Report (quarterly
+report card).
+
+When the network is overwhelmed you'll see **manhole geysers** erupt at the
+failure points (sickly green for combined-sewer overflows, brown for sewage
+backups) and the **river corner discolors** as pollution builds.
 
 Keyboard: **Space** play/pause, **R** report card, **]** speed, **+/−** rate.
 
@@ -55,6 +60,10 @@ Keyboard: **Space** play/pause, **R** report card, **]** speed, **+/−** rate.
 In **Sandbox** you just build and tinker. In **Scenario** you must grow the
 town to the target population while keeping overflows and finances in check
 before the deadline — bankrupt the department or wreck the river and it's "you've
-been fired."
+been fired." **Career** chains three cities of escalating difficulty —
+**Mudville** (a sleepy town), **Sprawlburg** (a booming suburb), and **Old
+Town** (a century-old city on a single clay combined trunk you must retrofit) —
+each unlocking more pipe materials and treatment tech. Clear a city and click
+through to the next; fail and you can retry it.
 
 See [`SPEC.md`](SPEC.md) for the full design-spec coverage map.

@@ -40,6 +40,15 @@ final class Simulation {
     private(set) var totalPopulation: Int = 0
     private(set) var lastReportCard: ReportCard?
 
+    /// Overflow points generated during the most recent tick, so the renderer
+    /// can pop geysers / river discoloration where they happened.
+    struct OverflowEvent {
+        let coord: GridCoord
+        let isCSO: Bool
+        let amount: Int
+    }
+    private(set) var overflowEventsThisTick: [OverflowEvent] = []
+
     private var rng: SplitMix64
 
     init(world: World, seed: UInt64 = 0xBEEF_F00D) {
@@ -86,6 +95,7 @@ final class Simulation {
     // MARK: - Reset
 
     private func resetPerTickState() {
+        overflowEventsThisTick.removeAll(keepingCapacity: true)
         for coord in world.pipes.keys {
             world.pipes[coord]?.flowThisTick = 0
         }
@@ -191,7 +201,7 @@ final class Simulation {
             guard let route = findRoute(from: house.coord) else {
                 world.houses[hid]?.isBackedUp = true
                 // No outlet at all: sanitary backs up, storm overflows.
-                handleOverflow(sanitary: sanitary, storm: stormLoad)
+                handleOverflow(sanitary: sanitary, storm: stormLoad, at: house.coord)
                 continue
             }
 
@@ -215,7 +225,7 @@ final class Simulation {
                     ? Int((Double(shortfall) * Double(stormLoad) / Double(demand)).rounded())
                     : 0
                 let sanitaryShare = shortfall - stormShare
-                handleOverflow(sanitary: sanitaryShare, storm: stormShare)
+                handleOverflow(sanitary: sanitaryShare, storm: stormShare, at: house.coord)
             } else if sanitary > 0 {
                 served += house.population
             }
@@ -230,10 +240,11 @@ final class Simulation {
 
     /// Charge an overflow: sanitary backups and combined-sewer overflows both
     /// pollute and count as incidents; CSOs are nastier and draw regulators.
-    private func handleOverflow(sanitary: Int, storm: Int) {
+    private func handleOverflow(sanitary: Int, storm: Int, at coord: GridCoord) {
         if storm > 0 {
             score.addPollution(Double(storm) * 0.5)
             score.recordOverflow()
+            overflowEventsThisTick.append(.init(coord: coord, isCSO: true, amount: storm))
             if rng.chance(0.30) {
                 log.post(EventFlavor.pick(EventFlavor.cso, rng: &rng),
                          severity: .crisis, tick: tick)
@@ -243,6 +254,7 @@ final class Simulation {
         if sanitary > 0 {
             score.addPollution(Double(sanitary) * 0.8)
             score.recordOverflow()
+            overflowEventsThisTick.append(.init(coord: coord, isCSO: false, amount: sanitary))
             if rng.chance(0.18) {
                 log.post(EventFlavor.pick(EventFlavor.backup, rng: &rng),
                          severity: .warning, tick: tick)
@@ -588,8 +600,17 @@ final class Simulation {
                  severity: card.grade == "F" ? .crisis : .info, tick: tick)
     }
 
+    /// Reset win/loss tracking (e.g. when switching to sandbox).
+    func resetOutcome() { outcome = .ongoing }
+
+    /// Start (or restart) a scenario from the current world state.
+    func beginScenario(_ s: Scenario) {
+        scenario = s
+        outcome = .ongoing
+    }
+
     private func evaluateOutcome() {
-        guard mode == .scenario else { outcome = .ongoing; return }
+        guard mode == .scenario || mode == .career else { outcome = .ongoing; return }
         let result = scenario.evaluate(
             population: totalPopulation,
             quarter: quarter,

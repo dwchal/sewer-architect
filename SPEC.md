@@ -44,21 +44,22 @@ implemented, 🟡 = modeled in a simplified form, ⬜ = not yet.
 |------|--------|-------|
 | Sandbox (no win/loss) | ✅ | `GameMode.sandbox` |
 | Scenario mode with goals | ✅ | `Scenario` (default: grow to target pop, cap overflows, stay solvent) |
-| Career mode (chain of cities) | ⬜ | single map for now; scenario is parameterized for future chaining |
+| Career mode (chain of cities, escalating tech/difficulty) | ✅ | `Career.swift` (Mudville → Sprawlburg → Old Town); level transitions in `GameScene` |
 | Scoring: coverage, overflow incidents, environment, finances, satisfaction | ✅ | `ReportCard` |
 | Loss: bankruptcy / environmental disaster / sanitation crisis | ✅ | `Scenario.evaluate` |
 
 ## Game modes
 
-Sandbox ✅, Scenario ✅, Career ⬜, Disaster mode 🟡 (tunables exist:
-`growthRate`, `disastersEnabled`, `Weather.stormFrequency`).
+Sandbox ✅, Scenario ✅, Career ✅ (3 chained cities w/ tech unlocks), Disaster
+mode 🟡 (tunables exist: `growthRate`, `disastersEnabled`,
+`Weather.stormFrequency`).
 
 ## Fun mechanical hooks
 
 | Spec | Status |
 |------|--------|
 | Visible flow simulation (color-coded fullness) | ✅ |
-| Overflow events (CSO pollution, incidents) | ✅ (numeric/log; geyser animation ⬜) |
+| Overflow events (CSO pollution, incidents) | ✅ animated manhole geysers + river discoloration (`spawnGeyser`, `updateRiver`) |
 | Pipe capacity upgrades ("dig up the street" w/ surcharge) | ✅ |
 | Treatment plant tech tiers w/ cost/benefit | ✅ |
 | "Flush logs" / comedic complaint ticker | ✅ `EventFlavor` |
@@ -71,6 +72,7 @@ Sandbox ✅, Scenario ✅, Career ⬜, Disaster mode 🟡 (tunables exist:
 
 - Stormwater is modeled per-parcel and folded into the sanitary route rather
   than as a fully separate second network.
-- No animated overflow geysers / river discoloration yet (tracked numerically).
-- Career progression, save/load, and distinct terrain obstacles (bedrock,
-  rivers crossing the map) are not implemented.
+- Career progress is per-session (no save/load yet); the 3-city chain resets
+  when the app relaunches.
+- Distinct terrain obstacles (bedrock, rivers crossing the map) are not yet
+  modeled beyond elevation + the outfall corner.
