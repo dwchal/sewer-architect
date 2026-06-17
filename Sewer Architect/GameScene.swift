@@ -616,18 +616,150 @@ final class GameScene: SKScene {
 
     private func addPipeNode(_ coord: GridCoord) {
         let pipe = world.pipes[coord]
-        let node = SKSpriteNode(color: pipeColor(pipe),
-                                size: CGSize(width: GameScene.tileSize - 7,
-                                             height: GameScene.tileSize - 7))
+        let connections = pipeConnections(from: coord)
+        let node = SKNode()
         node.position = pointForCoord(coord)
-        boardNode.addChild(node)
-        dynamicNodes.append(node)
+
+        let materialColor = pipeMaterialColor(pipe?.material)
+        let materialWidth = pipeMaterialWidth(pipe?.material)
+        let overlayColor = pipeColor(pipe)
+        let overlayWidth = max(2, materialWidth * 0.48)
+
+        let base = pipePath(for: connections)
+        let casing = SKShapeNode(path: base)
+        casing.strokeColor = materialColor
+        casing.lineWidth = materialWidth
+        casing.lineCap = .round
+        casing.lineJoin = .round
+        node.addChild(casing)
+
+        let fill = SKShapeNode(path: base)
+        fill.strokeColor = overlayColor
+        fill.lineWidth = overlayWidth
+        fill.lineCap = .round
+        fill.lineJoin = .round
+        node.addChild(fill)
+
+        if connections.count <= 1 {
+            let cap = SKShapeNode(path: pipeCapPath(for: connections))
+            cap.strokeColor = overlayColor
+            cap.lineWidth = overlayWidth
+            cap.lineCap = .round
+            node.addChild(cap)
+        }
 
         if pipe?.blocked == true {
             let x = SKLabelNode(text: "✕")
             x.fontName = "Helvetica-Bold"; x.fontSize = 14; x.fontColor = .red
             x.verticalAlignmentMode = .center; x.horizontalAlignmentMode = .center
+            x.position = blockedIndicatorPosition(for: connections)
             node.addChild(x)
+        }
+
+        boardNode.addChild(node)
+        dynamicNodes.append(node)
+    }
+
+    private enum PipeSide: CaseIterable {
+        case east, west, north, south
+
+        var offset: (dx: Int, dy: Int) {
+            switch self {
+            case .east:  return (1, 0)
+            case .west:  return (-1, 0)
+            case .north: return (0, 1)
+            case .south: return (0, -1)
+            }
+        }
+
+        var endpoint: CGPoint {
+            let reach = GameScene.tileSize * 0.46
+            switch self {
+            case .east:  return CGPoint(x: reach, y: 0)
+            case .west:  return CGPoint(x: -reach, y: 0)
+            case .north: return CGPoint(x: 0, y: reach)
+            case .south: return CGPoint(x: 0, y: -reach)
+            }
+        }
+    }
+
+    private func pipeConnections(from coord: GridCoord) -> Set<PipeSide> {
+        var result = Set<PipeSide>()
+        let neighborSet = Set(coord.orthogonalNeighbors)
+
+        for side in PipeSide.allCases {
+            let offset = side.offset
+            let neighbor = coord.offset(dx: offset.dx, dy: offset.dy)
+            guard neighborSet.contains(neighbor), let tile = world.tile(at: neighbor) else { continue }
+            switch tile {
+            case .pipe:
+                if world.pipes[neighbor] != nil { result.insert(side) }
+            case .pump:
+                result.insert(side)
+            default:
+                break
+            }
+        }
+
+        return result
+    }
+
+    private func pipePath(for connections: Set<PipeSide>) -> CGPath {
+        let path = CGMutablePath()
+        let center = CGPoint.zero
+        let sides = connections.isEmpty ? Set([PipeSide.east, .west]) : connections
+
+        for side in sides {
+            path.move(to: center)
+            path.addLine(to: side.endpoint)
+        }
+
+        return path
+    }
+
+    private func pipeCapPath(for connections: Set<PipeSide>) -> CGPath {
+        let path = CGMutablePath()
+        let side = connections.first ?? .east
+        let p = side.endpoint
+        let half = GameScene.tileSize * 0.13
+
+        switch side {
+        case .east, .west:
+            path.move(to: CGPoint(x: p.x, y: -half))
+            path.addLine(to: CGPoint(x: p.x, y: half))
+        case .north, .south:
+            path.move(to: CGPoint(x: -half, y: p.y))
+            path.addLine(to: CGPoint(x: half, y: p.y))
+        }
+
+        return path
+    }
+
+    private func blockedIndicatorPosition(for connections: Set<PipeSide>) -> CGPoint {
+        let sides = connections.isEmpty ? Set([PipeSide.east, .west]) : connections
+        let endpoints = sides.map(\.endpoint)
+        let averageX = endpoints.reduce(CGFloat.zero) { $0 + $1.x } / CGFloat(endpoints.count)
+        let averageY = endpoints.reduce(CGFloat.zero) { $0 + $1.y } / CGFloat(endpoints.count)
+        return CGPoint(x: averageX * 0.35, y: averageY * 0.35 + GameScene.tileSize * 0.2)
+    }
+
+    private func pipeMaterialColor(_ material: PipeMaterial?) -> SKColor {
+        switch material {
+        case .clay:       return SKColor(red: 0.48, green: 0.24, blue: 0.12, alpha: 1)
+        case .pvc:        return SKColor(white: 0.92, alpha: 1)
+        case .concrete:   return SKColor(white: 0.45, alpha: 1)
+        case .trenchless: return SKColor(red: 0.18, green: 0.18, blue: 0.24, alpha: 1)
+        case .none:       return SKColor(white: 0.35, alpha: 1)
+        }
+    }
+
+    private func pipeMaterialWidth(_ material: PipeMaterial?) -> CGFloat {
+        switch material {
+        case .clay:       return 7
+        case .pvc:        return 8
+        case .concrete:   return 10
+        case .trenchless: return 12
+        case .none:       return 7
         }
     }
 
