@@ -14,14 +14,22 @@ final class GameScene: SKScene {
 
     // MARK: Layout
 
-    static let tileSize: CGFloat = 30
+    static let tileWidth: CGFloat = 34
+    static let tileHeight: CGFloat = 20
     static let gridWidth: Int = 24
     static let gridHeight: Int = 16
     static let panelHeight: CGFloat = 168
+    static let boardMargin: CGFloat = 20
 
-    static var boardHeight: CGFloat { CGFloat(gridHeight) * tileSize }
+    static var tileSize: CGFloat { tileWidth }
+    static var boardWidth: CGFloat {
+        (CGFloat(gridWidth) + CGFloat(gridHeight)) * tileWidth / 2 + boardMargin * 2
+    }
+    static var boardHeight: CGFloat {
+        (CGFloat(gridWidth) + CGFloat(gridHeight)) * tileHeight / 2 + boardMargin * 2
+    }
     static var sceneSize: CGSize {
-        CGSize(width: CGFloat(gridWidth) * tileSize,
+        CGSize(width: boardWidth,
                height: boardHeight + panelHeight)
     }
 
@@ -35,7 +43,7 @@ final class GameScene: SKScene {
 
     private let boardNode = SKNode()
     private let uiNode = SKNode()
-    private var tileNodes: [[SKSpriteNode]] = []
+    private var tileNodes: [[SKShapeNode]] = []
     private var dynamicNodes: [SKNode] = []   // pipes + buildings, rebuilt per refresh
 
     // A click-to-dismiss modal (report card, win/loss, career transitions).
@@ -148,14 +156,22 @@ final class GameScene: SKScene {
     // MARK: Terrain
 
     private func buildTerrainTiles() {
-        var rows: [[SKSpriteNode]] = []
+        var rows: [[SKShapeNode]] = []
         for x in 0..<GameScene.gridWidth {
-            var column: [SKSpriteNode] = []
+            var column: [SKShapeNode] = []
             for y in 0..<GameScene.gridHeight {
                 let coord = GridCoord(x: x, y: y)
-                let node = SKSpriteNode(color: terrainColor(at: coord),
-                                        size: CGSize(width: GameScene.tileSize - 1,
-                                                     height: GameScene.tileSize - 1))
+                let path = CGMutablePath()
+                path.move(to: CGPoint(x: 0, y: GameScene.tileHeight / 2))
+                path.addLine(to: CGPoint(x: GameScene.tileWidth / 2, y: 0))
+                path.addLine(to: CGPoint(x: 0, y: -GameScene.tileHeight / 2))
+                path.addLine(to: CGPoint(x: -GameScene.tileWidth / 2, y: 0))
+                path.closeSubpath()
+
+                let node = SKShapeNode(path: path)
+                node.fillColor = terrainColor(at: coord)
+                node.strokeColor = SKColor(white: 0.05, alpha: 0.45)
+                node.lineWidth = 1
                 node.position = pointForCoord(coord)
                 node.zPosition = zPosition(for: coord, layerOffset: BoardLayer.terrainTop)
                 boardNode.addChild(node)
@@ -308,15 +324,27 @@ final class GameScene: SKScene {
         return diagonal * 100 + elevation * 10 + layerOffset
     }
 
+    private var boardCenterOffset: CGFloat {
+        CGFloat(GameScene.gridHeight) * GameScene.tileWidth / 2 + GameScene.boardMargin
+    }
+
+    private var elevationOffset: CGFloat { GameScene.boardMargin }
+
     private func pointForCoord(_ c: GridCoord) -> CGPoint {
-        CGPoint(x: (CGFloat(c.x) + 0.5) * GameScene.tileSize,
-                y: (CGFloat(c.y) + 0.5) * GameScene.tileSize)
+        let x = CGFloat(c.x) + 0.5
+        let y = CGFloat(c.y) + 0.5
+        return CGPoint(
+            x: (x - y) * GameScene.tileWidth / 2 + boardCenterOffset,
+            y: (x + y) * GameScene.tileHeight / 2 + elevationOffset
+        )
     }
 
     private func coordForBoardPoint(_ p: CGPoint) -> GridCoord? {
-        guard p.x >= 0, p.y >= 0 else { return nil }
-        let coord = GridCoord(x: Int(p.x / GameScene.tileSize),
-                              y: Int(p.y / GameScene.tileSize))
+        let xMinusY = (p.x - boardCenterOffset) / (GameScene.tileWidth / 2)
+        let xPlusY = (p.y - elevationOffset) / (GameScene.tileHeight / 2)
+        let gridX = (xPlusY + xMinusY) / 2
+        let gridY = (xPlusY - xMinusY) / 2
+        let coord = GridCoord(x: Int(floor(gridX)), y: Int(floor(gridY)))
         return world.inBounds(coord) ? coord : nil
     }
 
@@ -610,7 +638,7 @@ final class GameScene: SKScene {
             for y in 0..<min(tileNodes[x].count, GameScene.gridHeight) {
                 let c = GridCoord(x: x, y: y)
                 if c == world.outfall || (c.x + c.y) <= 2 {
-                    tileNodes[x][y].color = stained
+                    tileNodes[x][y].fillColor = stained
                 }
             }
         }
