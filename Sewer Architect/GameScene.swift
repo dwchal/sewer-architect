@@ -370,9 +370,12 @@ final class GameScene: SKScene {
         let p = event.location(in: self)
         guard p.y < GameScene.boardHeight else { return }
         // Click-drag to paint pipes / zones / erase quickly.
-        guard currentTool == .pipe || currentTool == .erase
-                || currentTool == .residential else { return }
-        handleBoardClick(at: p)
+        switch currentTool {
+        case .pipe, .erase, .residential, .commercial, .industrial:
+            handleBoardClick(at: p)
+        default:
+            return
+        }
     }
 
     private func handleBoardClick(at scenePoint: CGPoint) {

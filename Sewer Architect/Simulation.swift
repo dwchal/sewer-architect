@@ -400,9 +400,9 @@ final class Simulation {
         var actions = Simulation.crewActionsPerTick
 
         // Priority 1: clear blockages.
-        for c in world.pipes.keys where actions > 0 {
+        for c in world.pipes.keys.sorted() where actions > 0 {
             if world.pipes[c]?.blocked == true {
-                guard world.finance.canAfford(20) else { return }
+                guard world.finance.canAfford(20) else { break }
                 world.pipes[c]?.blocked = false
                 world.pipes[c]?.condition = max(world.pipes[c]?.condition ?? 0, 40)
                 world.finance.spend(20, reason: .maintenance)
@@ -427,7 +427,7 @@ final class Simulation {
     private func rollRandomEvents() {
         let weatherBlock = weather.current.blockageFactor
 
-        for c in world.pipes.keys {
+        for c in world.pipes.keys.sorted() {
             guard let pipe = world.pipes[c] else { continue }
 
             // Blockages: more likely when worn and during drought.
@@ -451,7 +451,7 @@ final class Simulation {
         }
 
         // Pump failures: worn pumps without a backup can trip offline.
-        for id in world.pumps.keys {
+        for id in world.pumps.keys.sorted() {
             guard let pump = world.pumps[id], pump.online else { continue }
             if pump.condition < 45 && !pump.hasBackupPump && rng.chance(0.01) {
                 world.pumps[id]?.online = false

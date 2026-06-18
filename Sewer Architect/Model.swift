@@ -11,7 +11,7 @@ import Foundation
 
 // MARK: - Geometry
 
-struct GridCoord: Hashable {
+struct GridCoord: Hashable, Comparable {
     let x: Int
     let y: Int
 
@@ -30,6 +30,13 @@ struct GridCoord: Hashable {
 
     func manhattanDistance(to other: GridCoord) -> Int {
         abs(x - other.x) + abs(y - other.y)
+    }
+
+    /// Row-major ordering. Used so RNG-driven loops over the pipe network
+    /// iterate in a deterministic order, since Swift's Dictionary keys view
+    /// is unordered across runs (hash seed is randomized).
+    static func < (lhs: GridCoord, rhs: GridCoord) -> Bool {
+        lhs.x != rhs.x ? lhs.x < rhs.x : lhs.y < rhs.y
     }
 }
 
