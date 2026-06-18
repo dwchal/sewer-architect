@@ -227,6 +227,7 @@ enum TileContent: Equatable {
     case pump(id: Int)
     case drain(id: Int)
     case basin(id: Int)
+    case lab(id: Int)
 
     var isConduit: Bool {
         switch self {
@@ -248,6 +249,7 @@ enum BuildTool: String, CaseIterable {
     case plant
     case drain
     case basin
+    case lab       // wastewater pathogen-monitoring lab (public-health revenue)
     case upgrade   // dig up the street: upsize pipe / upgrade plant in place
     case repair    // dispatch a crew to restore condition / clear a blockage
     case erase
@@ -263,6 +265,7 @@ enum BuildTool: String, CaseIterable {
         case .plant:       return "Plant"
         case .drain:       return "Drain"
         case .basin:       return "Basin"
+        case .lab:         return "Lab"
         case .upgrade:     return "Upsize"
         case .repair:      return "Repair"
         case .erase:       return "Erase"
@@ -343,6 +346,25 @@ struct RetentionBasin {
     let id: Int
     let coord: GridCoord
     var stored: Int = 0
+}
+
+/// Wastewater pathogen-monitoring lab. Samples the sewage from the connected
+/// catchment around it (wastewater-based epidemiology) and earns ongoing
+/// public-health surveillance-contract revenue, plus one-off grant windfalls
+/// whenever it catches an outbreak signal early.
+struct MonitoringLab {
+    static let buildCost: Int = 350
+    static let maintenancePerTick: Int = 5
+    /// How far (in tiles) the lab can sample connected parcels.
+    static let coverageRadius: Int = 5
+    /// Surveillance fee paid per monitored person, per "month" (scaled per tick).
+    static let feePerPopPerMonth: Double = 0.7
+
+    let id: Int
+    let coord: GridCoord
+    var monitoredThisTick: Int = 0
+    var lifetimeRevenue: Int = 0
+    var outbreaksDetected: Int = 0
 }
 
 /// Per-tile pipe state: what it's made of, whether it carries stormwater, how

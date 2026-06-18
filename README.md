@@ -36,6 +36,7 @@ of the map. Press **Play** and keep the city's waste flowing.
 | Plant | Treatment plant in the currently selected tier |
 | Drain | Storm inlet — diverts rain runoff away from the sanitary network |
 | Basin | Retention basin — buffers stormwater during storms |
+| Lab | Wastewater pathogen-monitoring lab — earns public-health surveillance revenue |
 | Upsize | Dig up the street to upgrade a pipe/plant tier, or add a backup pump |
 | Repair | Dispatch a crew to restore condition / clear a blockage |
 | Erase | Remove a tile |
@@ -52,6 +53,21 @@ report card).
 When the network is overwhelmed you'll see **manhole geysers** erupt at the
 failure points (sickly green for combined-sewer overflows, brown for sewage
 backups) and the **river corner discolors** as pollution builds.
+
+### Wastewater pathogen detection (new revenue stream)
+
+Drop a **Lab** on the network to run **wastewater-based epidemiology**: the lab
+samples the sewage from the *connected* parcels around it (within ~5 tiles) and
+bills public-health agencies an ongoing per-capita **surveillance fee**. The
+more population you actually keep connected in a lab's catchment, the more it
+pays — so good plumbing literally pays off twice. Overlapping labs don't
+double-bill the same residents, and each lab costs a little upkeep per tick.
+
+Every so often a lab **catches an outbreak signal early** (norovirus, flu,
+etc.), which triggers a one-off **emergency surveillance grant** — a windfall
+that grows as regulations and public-health funding mature. Watch the
+`Lab:<monitored>/+$<rev>` readout in the HUD and the **Surveillance rev /
+Outbreaks caught** totals on the quarterly report card.
 
 Keyboard: **Space** play/pause, **R** report card, **]** speed, **+/−** rate.
 

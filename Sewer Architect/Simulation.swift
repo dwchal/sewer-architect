@@ -40,6 +40,12 @@ final class Simulation {
     private(set) var totalPopulation: Int = 0
     private(set) var lastReportCard: ReportCard?
 
+    // Wastewater pathogen-surveillance readouts (lab network)
+    private(set) var monitoredPopulation: Int = 0
+    private(set) var lastSurveillanceRevenue: Int = 0
+    private(set) var lifetimeSurveillanceRevenue: Int = 0
+    private(set) var outbreaksDetected: Int = 0
+
     /// Overflow points generated during the most recent tick, so the renderer
     /// can pop geysers / river discoloration where they happened.
     struct OverflowEvent {
@@ -69,6 +75,7 @@ final class Simulation {
         let storm = computeStormwater()
         routeFlow(storm: storm)
         treatAndDischarge()
+        runWastewaterSurveillance()
 
         ageInfrastructure()
         runMaintenanceCrews()
@@ -109,6 +116,9 @@ final class Simulation {
         for id in world.houses.keys {
             world.houses[id]?.isBackedUp = false
             world.houses[id]?.isConnected = false
+        }
+        for id in world.labs.keys {
+            world.labs[id]?.monitoredThisTick = 0
         }
     }
 
@@ -374,6 +384,74 @@ final class Simulation {
         }
     }
 
+    // MARK: - Wastewater pathogen surveillance
+
+    /// Wastewater-based epidemiology: each monitoring lab samples the sewage from
+    /// the connected parcels in its catchment and bills public-health agencies a
+    /// per-capita surveillance fee. Overlapping labs don't double-bill the same
+    /// people. Now and then a lab flags a pathogen spike early and the county
+    /// cuts an emergency surveillance grant — a tidy one-off windfall.
+    private func runWastewaterSurveillance() {
+        guard !world.labs.isEmpty else {
+            monitoredPopulation = 0
+            lastSurveillanceRevenue = 0
+            return
+        }
+
+        // Union of connected parcels covered by at least one lab (no double count).
+        var monitoredHouses: Set<Int> = []
+        for lid in world.labs.keys.sorted() {
+            guard let lab = world.labs[lid] else { continue }
+            var labPop = 0
+            for (hid, house) in world.houses {
+                guard house.isConnected, house.load > 0 else { continue }
+                guard lab.coord.manhattanDistance(to: house.coord)
+                        <= MonitoringLab.coverageRadius else { continue }
+                labPop += house.population
+                monitoredHouses.insert(hid)
+            }
+            world.labs[lid]?.monitoredThisTick = labPop
+        }
+
+        let monitored = monitoredHouses.reduce(0) {
+            $0 + (world.houses[$1]?.population ?? 0)
+        }
+        monitoredPopulation = monitored
+
+        // Steady surveillance-contract income (per-tick slice of the monthly fee).
+        let revenue = Int((Double(monitored)
+                           * MonitoringLab.feePerPopPerMonth * 0.25).rounded())
+        if revenue > 0 {
+            world.finance.earn(revenue)
+            lifetimeSurveillanceRevenue += revenue
+            // Credit the income across the labs that did the sampling.
+            let active = world.labs.filter { $0.value.monitoredThisTick > 0 }.count
+            if active > 0 {
+                let share = revenue / active
+                for lid in world.labs.keys where world.labs[lid]?.monitoredThisTick ?? 0 > 0 {
+                    world.labs[lid]?.lifetimeRevenue += share
+                }
+            }
+        }
+        lastSurveillanceRevenue = revenue
+
+        // Early outbreak detection: the more people you sample, the likelier you
+        // catch a signal. Funding (like fines) scales up as regulations mature.
+        guard monitored > 0 else { return }
+        let detectChance = min(0.12, Double(monitored) * 0.0004)
+        if rng.chance(detectChance) {
+            let grant = monitored * (10 + quarter)
+            world.finance.earn(grant)
+            lifetimeSurveillanceRevenue += grant
+            outbreaksDetected += 1
+            if let lid = world.labs.keys.sorted().first {
+                world.labs[lid]?.outbreaksDetected += 1
+            }
+            log.post("\(EventFlavor.pick(EventFlavor.pathogen, rng: &rng)) +$\(grant) public-health grant.",
+                     severity: .info, tick: tick)
+        }
+    }
+
     // MARK: - Ageing
 
     private func ageInfrastructure() {
@@ -533,6 +611,7 @@ final class Simulation {
         expenses += world.pipes.count // $1/pipe/tick baseline upkeep
         for pump in world.pumps.values { _ = pump; expenses += PumpStation.maintenancePerTick }
         for plant in world.plants.values { expenses += plant.tier.maintenancePerTick }
+        for lab in world.labs.values { _ = lab; expenses += MonitoringLab.maintenancePerTick }
         world.finance.spend(expenses, reason: .maintenance)
 
         let interest = world.finance.accrueInterest()
