@@ -21,12 +21,22 @@ final class GameScene: SKScene {
     static let panelHeight: CGFloat = 168
     static let boardMargin: CGFloat = 20
 
+    /// Screen pixels of vertical rise per elevation level — this is what turns
+    /// the flat diamond grid into a chunky, RollerCoaster-Tycoon-style landscape.
+    static let elevationUnit: CGFloat = 3
+    /// How far the terrain "slab" extends below ground so the land reads as
+    /// solid earth with thickness rather than a paper-thin sheet.
+    static let baseThickness: CGFloat = 8
+    /// Extra room above the flat plane so tall hills don't collide with the panel.
+    static let elevationHeadroom: CGFloat = 120
+
     static var tileSize: CGFloat { tileWidth }
     static var boardWidth: CGFloat {
         (CGFloat(gridWidth) + CGFloat(gridHeight)) * tileWidth / 2 + boardMargin * 2
     }
     static var boardHeight: CGFloat {
-        (CGFloat(gridWidth) + CGFloat(gridHeight)) * tileHeight / 2 + boardMargin * 2
+        (CGFloat(gridWidth) + CGFloat(gridHeight)) * tileHeight / 2
+            + boardMargin * 2 + elevationHeadroom
     }
     static var sceneSize: CGSize {
         CGSize(width: boardWidth,
@@ -155,27 +165,70 @@ final class GameScene: SKScene {
 
     // MARK: Terrain
 
+    /// Each terrain tile is extruded into an isometric block: a lit top diamond
+    /// raised by its elevation, plus two shaded side walls dropping down to a
+    /// common base. Front tiles draw over back ones, so the whole grid reads as
+    /// a single chunky landmass with visible hills and earthen cliffs.
     private func buildTerrainTiles() {
         var rows: [[SKShapeNode]] = []
+        let tw = GameScene.tileWidth
+        let th = GameScene.tileHeight
+        let base = GameScene.baseThickness
         for x in 0..<GameScene.gridWidth {
             var column: [SKShapeNode] = []
             for y in 0..<GameScene.gridHeight {
                 let coord = GridCoord(x: x, y: y)
-                let path = CGMutablePath()
-                path.move(to: CGPoint(x: 0, y: GameScene.tileHeight / 2))
-                path.addLine(to: CGPoint(x: GameScene.tileWidth / 2, y: 0))
-                path.addLine(to: CGPoint(x: 0, y: -GameScene.tileHeight / 2))
-                path.addLine(to: CGPoint(x: -GameScene.tileWidth / 2, y: 0))
-                path.closeSubpath()
+                let h = CGFloat(world.groundLevel(at: coord)) * GameScene.elevationUnit
+                let top = terrainColor(at: coord)
 
-                let node = SKShapeNode(path: path)
-                node.fillColor = terrainColor(at: coord)
-                node.strokeColor = SKColor(white: 0.05, alpha: 0.45)
-                node.lineWidth = 1
-                node.position = pointForCoord(coord)
-                node.zPosition = zPosition(for: coord, layerOffset: BoardLayer.terrainTop)
-                boardNode.addChild(node)
-                column.append(node)
+                let container = SKNode()
+                container.position = pointForCoord(coord)
+                container.zPosition = zPosition(for: coord, layerOffset: BoardLayer.terrainSide)
+                boardNode.addChild(container)
+
+                // Left (south-west) wall — shaded darkest.
+                let leftPath = CGMutablePath()
+                leftPath.move(to: CGPoint(x: -tw / 2, y: h))
+                leftPath.addLine(to: CGPoint(x: 0, y: h - th / 2))
+                leftPath.addLine(to: CGPoint(x: 0, y: -th / 2 - base))
+                leftPath.addLine(to: CGPoint(x: -tw / 2, y: -base))
+                leftPath.closeSubpath()
+                let leftWall = SKShapeNode(path: leftPath)
+                leftWall.fillColor = shade(top, 0.55)
+                leftWall.strokeColor = shade(top, 0.45)
+                leftWall.lineWidth = 0.5
+                leftWall.zPosition = 0
+                container.addChild(leftWall)
+
+                // Right (south-east) wall — shaded medium.
+                let rightPath = CGMutablePath()
+                rightPath.move(to: CGPoint(x: tw / 2, y: h))
+                rightPath.addLine(to: CGPoint(x: 0, y: h - th / 2))
+                rightPath.addLine(to: CGPoint(x: 0, y: -th / 2 - base))
+                rightPath.addLine(to: CGPoint(x: tw / 2, y: -base))
+                rightPath.closeSubpath()
+                let rightWall = SKShapeNode(path: rightPath)
+                rightWall.fillColor = shade(top, 0.74)
+                rightWall.strokeColor = shade(top, 0.6)
+                rightWall.lineWidth = 0.5
+                rightWall.zPosition = 0.1
+                container.addChild(rightWall)
+
+                // Lit top face.
+                let topPath = CGMutablePath()
+                topPath.move(to: CGPoint(x: 0, y: h + th / 2))
+                topPath.addLine(to: CGPoint(x: tw / 2, y: h))
+                topPath.addLine(to: CGPoint(x: 0, y: h - th / 2))
+                topPath.addLine(to: CGPoint(x: -tw / 2, y: h))
+                topPath.closeSubpath()
+                let topNode = SKShapeNode(path: topPath)
+                topNode.fillColor = top
+                topNode.strokeColor = shade(top, 0.8)
+                topNode.lineWidth = 0.5
+                topNode.zPosition = 0.2
+                container.addChild(topNode)
+
+                column.append(topNode)
             }
             rows.append(column)
         }
@@ -318,10 +371,14 @@ final class GameScene: SKScene {
         static let animation: CGFloat = 8
     }
 
+    /// Painter's-algorithm depth: tiles nearer the viewer (smaller x+y, toward
+    /// the outfall corner at the bottom of the screen) get a *higher* zPosition
+    /// so they draw on top of — and correctly occlude — the taller terrain and
+    /// buildings behind them.
     private func zPosition(for coord: GridCoord, layerOffset: CGFloat = 0) -> CGFloat {
         let diagonal = CGFloat(coord.x + coord.y)
-        let elevation = CGFloat(world.groundLevel(at: coord))
-        return diagonal * 100 + elevation * 10 + layerOffset
+        let span = CGFloat(GameScene.gridWidth + GameScene.gridHeight)
+        return (span - diagonal) * 100 + layerOffset
     }
 
     private var boardCenterOffset: CGFloat {
@@ -337,6 +394,14 @@ final class GameScene: SKScene {
             x: (x - y) * GameScene.tileWidth / 2 + boardCenterOffset,
             y: (x + y) * GameScene.tileHeight / 2 + elevationOffset
         )
+    }
+
+    /// The top-center of a tile's terrain block — where buildings sit and
+    /// geysers erupt. This is the flat plane point lifted by the tile elevation.
+    private func surfacePoint(_ c: GridCoord) -> CGPoint {
+        let p = pointForCoord(c)
+        return CGPoint(x: p.x,
+                       y: p.y + CGFloat(world.groundLevel(at: c)) * GameScene.elevationUnit)
     }
 
     private func coordForBoardPoint(_ p: CGPoint) -> GridCoord? {
@@ -594,7 +659,7 @@ final class GameScene: SKScene {
             ? SKColor(red: 0.32, green: 0.5, blue: 0.18, alpha: 1)   // murky green
             : SKColor(red: 0.45, green: 0.30, blue: 0.14, alpha: 1)  // brown
         let container = SKNode()
-        container.position = pointForCoord(coord)
+        container.position = surfacePoint(coord)
         container.zPosition = zPosition(for: coord, layerOffset: BoardLayer.animation)
         boardNode.addChild(container)
 
@@ -673,20 +738,19 @@ final class GameScene: SKScene {
 
     private func addPipeNode(_ coord: GridCoord) {
         let pipe = world.pipes[coord]
-        let node = SKSpriteNode(color: pipeColor(pipe),
-                                size: CGSize(width: GameScene.tileSize - 7,
-                                             height: GameScene.tileSize - 7))
-        node.position = pointForCoord(coord)
-        node.zPosition = zPosition(for: coord, layerOffset: BoardLayer.pipe)
-        boardNode.addChild(node)
-        dynamicNodes.append(node)
+        // Pipes sit in the street as a shallow, slightly recessed channel.
+        let anchor = addIsoBox(at: coord, inset: 5, height: 2,
+                               topColor: pipeColor(pipe),
+                               strokeColor: SKColor(white: 0.1, alpha: 0.5),
+                               lineWidth: 0.75,
+                               layer: BoardLayer.pipe)
 
         if pipe?.blocked == true {
             let x = SKLabelNode(text: "✕")
             x.fontName = "Helvetica-Bold"; x.fontSize = 14; x.fontColor = .red
             x.verticalAlignmentMode = .center; x.horizontalAlignmentMode = .center
             x.zPosition = BoardLayer.marker
-            node.addChild(x)
+            anchor.addChild(x)
         }
     }
 
@@ -710,23 +774,22 @@ final class GameScene: SKScene {
 
     private func addHouseNode(_ coord: GridCoord, id: Int) {
         guard let house = world.houses[id] else { return }
-        let node = SKShapeNode(rectOf: CGSize(width: GameScene.tileSize - 4,
-                                              height: GameScene.tileSize - 4),
-                               cornerRadius: 4)
         let brightness = 0.55 + 0.15 * CGFloat(house.level)
-        node.fillColor = zoneColor(house.zone, brightness: brightness)
-        node.strokeColor = house.isBackedUp ? .red : (house.isConnected ? .white : .systemYellow)
-        node.lineWidth = house.isBackedUp ? 3 : 1
-        node.position = pointForCoord(coord)
-        node.zPosition = zPosition(for: coord, layerOffset: BoardLayer.building)
-        boardNode.addChild(node)
-        dynamicNodes.append(node)
+        // Taller, denser parcels grow upward — a quick read on development level.
+        let height = 9 + CGFloat(house.level) * 5
+        let stroke: SKColor = house.isBackedUp ? .red
+            : (house.isConnected ? .white : .systemYellow)
+        let anchor = addIsoBox(at: coord, inset: 4, height: height,
+                               topColor: zoneColor(house.zone, brightness: brightness),
+                               strokeColor: stroke,
+                               lineWidth: house.isBackedUp ? 3 : 1,
+                               layer: BoardLayer.building)
 
         let letter = SKLabelNode(text: String(house.zone.shortName.prefix(1)))
-        letter.fontName = "Helvetica-Bold"; letter.fontSize = 12; letter.fontColor = .black
+        letter.fontName = "Helvetica-Bold"; letter.fontSize = 11; letter.fontColor = .black
         letter.verticalAlignmentMode = .center; letter.horizontalAlignmentMode = .center
         letter.zPosition = BoardLayer.label
-        node.addChild(letter)
+        anchor.addChild(letter)
     }
 
     private func zoneColor(_ zone: ZoneType, brightness: CGFloat) -> SKColor {
@@ -740,79 +803,143 @@ final class GameScene: SKScene {
 
     private func addPlantNode(_ coord: GridCoord, id: Int) {
         guard let plant = world.plants[id] else { return }
-        let node = SKShapeNode(rectOf: CGSize(width: GameScene.tileSize - 2,
-                                              height: GameScene.tileSize - 2),
-                               cornerRadius: 6)
         let tierBrightness: CGFloat = plant.tier == .primary ? 0.5
             : (plant.tier == .secondary ? 0.75 : 1.0)
-        node.fillColor = SKColor(red: 0.15, green: 0.7 * tierBrightness, blue: 0.25, alpha: 1)
-        node.strokeColor = plant.condition < 30 ? .red : .white
-        node.lineWidth = 2
-        node.position = pointForCoord(coord)
-        node.zPosition = zPosition(for: coord, layerOffset: BoardLayer.utility)
-        boardNode.addChild(node)
-        dynamicNodes.append(node)
+        // Higher tiers are taller, more substantial works.
+        let height: CGFloat = plant.tier == .primary ? 12
+            : (plant.tier == .secondary ? 16 : 20)
+        let anchor = addIsoBox(at: coord, inset: 1, height: height,
+                               topColor: SKColor(red: 0.15, green: 0.7 * tierBrightness,
+                                                 blue: 0.25, alpha: 1),
+                               strokeColor: plant.condition < 30 ? .red : .white,
+                               lineWidth: 2,
+                               layer: BoardLayer.utility)
 
         let label = SKLabelNode(text: "P\(plant.tier == .primary ? "1" : plant.tier == .secondary ? "2" : "3")")
         label.fontName = "Helvetica-Bold"; label.fontSize = 11; label.fontColor = .white
         label.verticalAlignmentMode = .center; label.horizontalAlignmentMode = .center
         label.zPosition = BoardLayer.label
-        node.addChild(label)
+        anchor.addChild(label)
     }
 
     private func addPumpNode(_ coord: GridCoord, id: Int) {
         guard let pump = world.pumps[id] else { return }
-        let node = SKShapeNode(rectOf: CGSize(width: GameScene.tileSize - 6,
-                                              height: GameScene.tileSize - 6),
-                               cornerRadius: 3)
-        node.fillColor = pump.online ? .systemOrange : SKColor(red: 0.4, green: 0.1, blue: 0.1, alpha: 1)
-        node.strokeColor = pump.hasBackupPump ? .systemGreen : .white
-        node.lineWidth = 2
-        node.zRotation = .pi / 4
-        node.position = pointForCoord(coord)
-        node.zPosition = zPosition(for: coord, layerOffset: BoardLayer.utility)
-        boardNode.addChild(node)
-        dynamicNodes.append(node)
+        let top = pump.online ? SKColor.systemOrange
+            : SKColor(red: 0.4, green: 0.1, blue: 0.1, alpha: 1)
+        let anchor = addIsoBox(at: coord, inset: 5, height: 13,
+                               topColor: top,
+                               strokeColor: pump.hasBackupPump ? .systemGreen : .white,
+                               lineWidth: 2,
+                               layer: BoardLayer.utility)
 
         let arrow = SKLabelNode(text: pump.online ? "↑" : "×")
         arrow.fontName = "Helvetica-Bold"; arrow.fontSize = 13; arrow.fontColor = .black
         arrow.verticalAlignmentMode = .center; arrow.horizontalAlignmentMode = .center
-        arrow.zRotation = -.pi / 4
         arrow.zPosition = BoardLayer.label
-        node.addChild(arrow)
+        anchor.addChild(arrow)
     }
 
     private func addDrainNode(_ coord: GridCoord) {
-        let node = SKShapeNode(rectOf: CGSize(width: GameScene.tileSize - 8,
-                                              height: GameScene.tileSize - 8),
-                               cornerRadius: 2)
-        node.fillColor = .systemTeal
-        node.strokeColor = .white
-        node.lineWidth = 1
-        node.position = pointForCoord(coord)
-        node.zPosition = zPosition(for: coord, layerOffset: BoardLayer.utility)
-        boardNode.addChild(node)
-        dynamicNodes.append(node)
+        // A storm inlet: a shallow grate set into the street surface.
+        let anchor = addIsoBox(at: coord, inset: 7, height: 2,
+                               topColor: .systemTeal,
+                               strokeColor: .white,
+                               lineWidth: 1,
+                               layer: BoardLayer.utility)
         let g = SKLabelNode(text: "≈")
         g.fontName = "Helvetica-Bold"; g.fontSize = 12; g.fontColor = .black
         g.verticalAlignmentMode = .center; g.horizontalAlignmentMode = .center
         g.zPosition = BoardLayer.label
-        node.addChild(g)
+        anchor.addChild(g)
     }
 
     private func addBasinNode(_ coord: GridCoord, id: Int) {
         guard let basin = world.basins[id] else { return }
-        let node = SKShapeNode(rectOf: CGSize(width: GameScene.tileSize - 4,
-                                              height: GameScene.tileSize - 4),
-                               cornerRadius: 8)
         let fill = CGFloat(basin.stored) / CGFloat(RetentionBasin.capacity)
-        node.fillColor = SKColor(red: 0.2, green: 0.3 + 0.4 * fill, blue: 0.7, alpha: 1)
-        node.strokeColor = .white
-        node.lineWidth = 1
-        node.position = pointForCoord(coord)
-        node.zPosition = zPosition(for: coord, layerOffset: BoardLayer.utility)
-        boardNode.addChild(node)
-        dynamicNodes.append(node)
+        // A sunken basin whose water level rises as it fills.
+        addIsoBox(at: coord, inset: 3, height: 3 + 5 * fill,
+                  topColor: SKColor(red: 0.2, green: 0.3 + 0.4 * fill, blue: 0.7, alpha: 1),
+                  strokeColor: .white,
+                  lineWidth: 1,
+                  layer: BoardLayer.utility)
+    }
+
+    /// Multiply a color's brightness — used to fake directional lighting on the
+    /// side faces of isometric blocks (top stays lit, walls go darker).
+    private func shade(_ c: SKColor, _ factor: CGFloat) -> SKColor {
+        var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
+        c.usingColorSpace(.deviceRGB)?.getRed(&r, green: &g, blue: &b, alpha: &a)
+        return SKColor(red: r * factor, green: g * factor, blue: b * factor, alpha: a)
+    }
+
+    /// Build a 3D isometric box standing on a tile: a lit top diamond raised by
+    /// `height`, plus two shaded side walls down to the tile surface. Returns an
+    /// anchor node sitting at the center of the *top* face so callers can attach
+    /// labels there. Nodes are added to `boardNode` and tracked in `dynamicNodes`.
+    @discardableResult
+    private func addIsoBox(at coord: GridCoord,
+                           inset: CGFloat,
+                           height: CGFloat,
+                           topColor: SKColor,
+                           strokeColor: SKColor,
+                           lineWidth: CGFloat,
+                           layer: CGFloat) -> SKNode {
+        let tw = GameScene.tileWidth - inset * 2
+        let th = GameScene.tileHeight - inset * 2
+
+        let container = SKNode()
+        container.position = surfacePoint(coord)
+        container.zPosition = zPosition(for: coord, layerOffset: layer)
+        boardNode.addChild(container)
+        dynamicNodes.append(container)
+
+        // Left wall.
+        let leftPath = CGMutablePath()
+        leftPath.move(to: CGPoint(x: -tw / 2, y: height))
+        leftPath.addLine(to: CGPoint(x: 0, y: height - th / 2))
+        leftPath.addLine(to: CGPoint(x: 0, y: -th / 2))
+        leftPath.addLine(to: CGPoint(x: -tw / 2, y: 0))
+        leftPath.closeSubpath()
+        let leftWall = SKShapeNode(path: leftPath)
+        leftWall.fillColor = shade(topColor, 0.58)
+        leftWall.strokeColor = strokeColor
+        leftWall.lineWidth = lineWidth * 0.5
+        leftWall.zPosition = 0
+        container.addChild(leftWall)
+
+        // Right wall.
+        let rightPath = CGMutablePath()
+        rightPath.move(to: CGPoint(x: tw / 2, y: height))
+        rightPath.addLine(to: CGPoint(x: 0, y: height - th / 2))
+        rightPath.addLine(to: CGPoint(x: 0, y: -th / 2))
+        rightPath.addLine(to: CGPoint(x: tw / 2, y: 0))
+        rightPath.closeSubpath()
+        let rightWall = SKShapeNode(path: rightPath)
+        rightWall.fillColor = shade(topColor, 0.78)
+        rightWall.strokeColor = strokeColor
+        rightWall.lineWidth = lineWidth * 0.5
+        rightWall.zPosition = 0.1
+        container.addChild(rightWall)
+
+        // Lit top face.
+        let topPath = CGMutablePath()
+        topPath.move(to: CGPoint(x: 0, y: height + th / 2))
+        topPath.addLine(to: CGPoint(x: tw / 2, y: height))
+        topPath.addLine(to: CGPoint(x: 0, y: height - th / 2))
+        topPath.addLine(to: CGPoint(x: -tw / 2, y: height))
+        topPath.closeSubpath()
+        let topNode = SKShapeNode(path: topPath)
+        topNode.fillColor = topColor
+        topNode.strokeColor = strokeColor
+        topNode.lineWidth = lineWidth
+        topNode.zPosition = 0.2
+        container.addChild(topNode)
+
+        let anchor = SKNode()
+        anchor.position = CGPoint(x: 0, y: height)
+        anchor.zPosition = 0.3
+        container.addChild(anchor)
+        return anchor
     }
 
     private func blend(_ a: SKColor, _ b: SKColor, t: CGFloat) -> SKColor {
