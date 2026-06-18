@@ -71,6 +71,13 @@ enum EventFlavor {
         "Sewage backs up into basements; residents are, predictably, upset.",
         "Low-lying homes report the wrong kind of indoor water feature."
     ]
+    static let pathogen = [
+        "Sewer lab flags a norovirus spike days before the clinics do.",
+        "Wastewater surveillance catches a flu wave early; county is thrilled.",
+        "Lab detects rising pathogen markers; health dept. acts ahead of the curve.",
+        "Your sewage data scoops the hospitals on the next outbreak.",
+        "Pathogen monitoring pays off: an outbreak spotted in the poop, not the ER."
+    ]
 
     static func pick(_ pool: [String], rng: inout SplitMix64) -> String {
         guard !pool.isEmpty else { return "" }

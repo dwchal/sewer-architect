@@ -265,6 +265,7 @@ final class GameScene: SKScene {
             (.industrial, .systemPurple), (.pipe, .systemGray),
             (.pump, .systemOrange), (.plant, .systemGreen),
             (.drain, .systemTeal), (.basin, .systemIndigo),
+            (.lab, .systemPink),
             (.upgrade, .brown), (.repair, .systemMint), (.erase, .systemRed)
         ]
         layoutButtonRow(y: 22, items: tools.map { ($0.0.displayName, "tool:\($0.0.rawValue)", $0.1) })
@@ -729,6 +730,7 @@ final class GameScene: SKScene {
                 case .pump(let id): addPumpNode(coord, id: id)
                 case .drain:        addDrainNode(coord)
                 case .basin(let id):addBasinNode(coord, id: id)
+                case .lab(let id):  addLabNode(coord, id: id)
                 }
             }
         }
@@ -864,6 +866,27 @@ final class GameScene: SKScene {
                   layer: BoardLayer.utility)
     }
 
+    private func addLabNode(_ coord: GridCoord, id: Int) {
+        guard let lab = world.labs[id] else { return }
+        // A clean clinical-white monitoring station; brighter while actively
+        // sampling a connected catchment.
+        let active = lab.monitoredThisTick > 0
+        let top = active
+            ? SKColor(red: 0.95, green: 0.95, blue: 1.0, alpha: 1)
+            : SKColor(red: 0.7, green: 0.72, blue: 0.78, alpha: 1)
+        let anchor = addIsoBox(at: coord, inset: 3, height: 14,
+                               topColor: top,
+                               strokeColor: active ? .systemPink : .white,
+                               lineWidth: 2,
+                               layer: BoardLayer.utility)
+
+        let flask = SKLabelNode(text: "🧪")
+        flask.fontName = "Helvetica-Bold"; flask.fontSize = 12
+        flask.verticalAlignmentMode = .center; flask.horizontalAlignmentMode = .center
+        flask.zPosition = BoardLayer.label
+        anchor.addChild(flask)
+    }
+
     /// Multiply a color's brightness — used to fake directional lighting on the
     /// side faces of isometric blocks (top stays lit, walls go darker).
     private func shade(_ c: SKColor, _ factor: CGFloat) -> SKColor {
@@ -962,11 +985,12 @@ final class GameScene: SKScene {
             f.cash, f.debt, f.sewerRate, f.lastRevenue, f.lastExpenses)
 
         statusLine2.text = String(
-            format: "Pop %d/%d served  Coverage %.0f%%  Happy %.0f%%  Env %.0f%%  Overflows(Q) %d",
+            format: "Pop %d/%d served  Coverage %.0f%%  Happy %.0f%%  Env %.0f%%  Overflows(Q) %d  Lab:%d/+$%d",
             simulation.servedPopulation, simulation.totalPopulation,
             simulation.serviceCoverage, simulation.citySatisfaction,
             simulation.score.environmentScore,
-            simulation.score.overflowIncidentsThisQuarter)
+            simulation.score.overflowIncidentsThisQuarter,
+            simulation.monitoredPopulation, simulation.lastSurveillanceRevenue)
 
         var outcomeStr = "Playing"
         switch simulation.outcome {
@@ -1020,6 +1044,7 @@ final class GameScene: SKScene {
                 String(format: "Financial health: %.0f%%", c.financialHealth),
                 String(format: "Satisfaction:     %.0f%%", c.satisfaction),
                 "Cash: $\(c.cash)   Debt: $\(c.debt)",
+                "Surveillance rev: $\(simulation.lifetimeSurveillanceRevenue)   Outbreaks caught: \(simulation.outbreaksDetected)",
                 "",
                 "(click anywhere or press R to close)"
             ]

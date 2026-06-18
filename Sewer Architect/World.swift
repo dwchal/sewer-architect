@@ -33,6 +33,7 @@ final class World {
     var pumps: [Int: PumpStation] = [:]
     var drains: [Int: StormDrain] = [:]
     var basins: [Int: RetentionBasin] = [:]
+    var labs: [Int: MonitoringLab] = [:]
     var pipes: [GridCoord: PipeState] = [:]
 
     /// Where the city discharges treated effluent (and, sadly, overflows). The
@@ -199,6 +200,7 @@ final class World {
         case .plant:               return selectedPlantTier.buildCost
         case .drain:               return StormDrain.buildCost
         case .basin:               return RetentionBasin.buildCost
+        case .lab:                 return MonitoringLab.buildCost
         case .upgrade:             return upgradeCost(at: coord)
         case .repair:              return repairCost(at: coord)
         }
@@ -244,7 +246,7 @@ final class World {
         case .repair:
             return repair(at: c)
         case .residential, .commercial, .industrial,
-             .pipe, .pump, .plant, .drain, .basin:
+             .pipe, .pump, .plant, .drain, .basin, .lab:
             return build(tool, at: c)
         }
     }
@@ -281,6 +283,10 @@ final class World {
             let id = makeId()
             tiles[c.x][c.y] = .basin(id: id)
             basins[id] = RetentionBasin(id: id, coord: c)
+        case .lab:
+            let id = makeId()
+            tiles[c.x][c.y] = .lab(id: id)
+            labs[id] = MonitoringLab(id: id, coord: c)
         default:
             return .rejectedInvalid
         }
@@ -306,6 +312,8 @@ final class World {
             drains.removeValue(forKey: id)
         case .basin(let id):
             basins.removeValue(forKey: id)
+        case .lab(let id):
+            labs.removeValue(forKey: id)
         }
         tiles[c.x][c.y] = .empty
         return .placed
