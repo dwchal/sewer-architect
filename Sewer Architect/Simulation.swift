@@ -455,15 +455,19 @@ final class Simulation {
     // MARK: - Ageing
 
     private func ageInfrastructure() {
-        for c in world.pipes.keys {
+        // Materialize the keys before mutating each dictionary — iterating a
+        // dictionary's live .keys view while writing back through the
+        // subscript trips Swift's exclusivity checker as a simultaneous
+        // access (fatal at runtime). Sorting also keeps the order stable.
+        for c in world.pipes.keys.sorted() {
             guard var pipe = world.pipes[c] else { continue }
             pipe.condition = max(0, pipe.condition - pipe.material.decayPerTick)
             world.pipes[c] = pipe
         }
-        for id in world.pumps.keys {
+        for id in world.pumps.keys.sorted() {
             world.pumps[id]?.condition = max(0, (world.pumps[id]?.condition ?? 0) - 0.10)
         }
-        for id in world.plants.keys {
+        for id in world.plants.keys.sorted() {
             world.plants[id]?.condition = max(0, (world.plants[id]?.condition ?? 0) - 0.05)
         }
     }
